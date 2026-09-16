@@ -69,7 +69,9 @@ final class ChatViewModel {
                     case .info(let info):
                         tokensPerSecond = info.tokensPerSecond
                         assistantMessage.tokensPerSecond = info.tokensPerSecond
-                    case .toolCall, .rejectedToolCall:
+                    default:
+                        // Tool calls arrive with Fase 5 (cliente MCP); until
+                        // then anything other than text/stats is ignored.
                         break
                     }
                 }
