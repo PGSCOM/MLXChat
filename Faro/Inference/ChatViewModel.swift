@@ -80,6 +80,17 @@ final class ChatViewModel {
             } catch {
                 errorMessage = error.localizedDescription
             }
+
+            // Whatever the splitter was still holding back as possible
+            // tag-boundary lookahead is now final — release it.
+            let tail = splitter.finish()
+            if !tail.reasoning.isEmpty {
+                assistantMessage.reasoning = (assistantMessage.reasoning ?? "") + tail.reasoning
+            }
+            if !tail.content.isEmpty {
+                assistantMessage.content += tail.content
+            }
+
             try? modelContext.save()
             isGenerating = false
         }

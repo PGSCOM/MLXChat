@@ -4,39 +4,52 @@ import Testing
 /// Pure-logic coverage that doesn't touch MLX/GPU, so it runs on the
 /// simulator regardless of Metal availability there.
 struct ThinkTagSplitterTests {
-    @Test func passesPlainTextThrough() {
-        var splitter = ThinkTagSplitter()
-        let delta = splitter.consume("Hola, ¿en qué te ayudo?")
-        #expect(delta.content == "Hola, ¿en qué te ayudo?")
-        #expect(delta.reasoning.isEmpty)
-    }
-
-    @Test func splitsAReasoningBlockInOneChunk() {
-        var splitter = ThinkTagSplitter()
-        let delta = splitter.consume("<think>pensando en voz alta</think>respuesta")
-        #expect(delta.reasoning == "pensando en voz alta")
-        #expect(delta.content == "respuesta")
-    }
-
-    @Test func handlesATagSplitAcrossChunks() {
+    /// Feeds every chunk, then calls `finish()` (as the real stream
+    /// consumer does once generation ends) and returns the combined delta.
+    private func run(_ chunks: [String]) -> (reasoning: String, content: String) {
         var splitter = ThinkTagSplitter()
         var reasoning = ""
         var content = ""
-
-        for piece in ["<thi", "nk>razo", "namiento</th", "ink>hola"] {
-            let delta = splitter.consume(piece)
+        for chunk in chunks {
+            let delta = splitter.consume(chunk)
             reasoning += delta.reasoning
             content += delta.content
         }
+        let tail = splitter.finish()
+        reasoning += tail.reasoning
+        content += tail.content
+        return (reasoning, content)
+    }
 
-        #expect(reasoning == "razonamiento")
-        #expect(content == "hola")
+    @Test func passesPlainTextThrough() {
+        let result = run(["Hola, ¿en qué te ayudo?"])
+        #expect(result.content == "Hola, ¿en qué te ayudo?")
+        #expect(result.reasoning.isEmpty)
+    }
+
+    @Test func splitsAReasoningBlockInOneChunk() {
+        let result = run(["<think>pensando en voz alta</think>respuesta"])
+        #expect(result.reasoning == "pensando en voz alta")
+        #expect(result.content == "respuesta")
+    }
+
+    @Test func handlesATagSplitAcrossChunks() {
+        let result = run(["<thi", "nk>razo", "namiento</th", "ink>hola"])
+        #expect(result.reasoning == "razonamiento")
+        #expect(result.content == "hola")
     }
 
     @Test func supportsMultipleReasoningBlocks() {
-        var splitter = ThinkTagSplitter()
-        let delta = splitter.consume("<think>uno</think>a<think>dos</think>b")
-        #expect(delta.reasoning == "unodos")
-        #expect(delta.content == "ab")
+        let result = run(["<think>uno</think>a<think>dos</think>b"])
+        #expect(result.reasoning == "unodos")
+        #expect(result.content == "ab")
+    }
+
+    @Test func leavesAnUnterminatedThinkBlockAsReasoning() {
+        // If the stream ends mid-block (truncated generation), finish()
+        // must not silently drop the partial reasoning text.
+        let result = run(["<think>a la mitad"])
+        #expect(result.reasoning == "a la mitad")
+        #expect(result.content.isEmpty)
     }
 }

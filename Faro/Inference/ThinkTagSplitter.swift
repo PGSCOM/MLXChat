@@ -43,4 +43,16 @@ struct ThinkTagSplitter {
         }
         return delta
     }
+
+    /// Call once the stream has ended: whatever is still held back as
+    /// tag-boundary lookahead can no longer become a real tag, so it's
+    /// released as plain content (or reasoning, if a `<think>` block was
+    /// left unterminated). Without this, the last few characters of every
+    /// response would silently vanish.
+    mutating func finish() -> Delta {
+        defer { buffer = "" }
+        var delta = Delta()
+        if insideThink { delta.reasoning = buffer } else { delta.content = buffer }
+        return delta
+    }
 }
