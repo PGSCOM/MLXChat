@@ -93,7 +93,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: app.faro.ios
         GENERATE_INFOPLIST_FILE: NO
     scheme:
-      configVariants: [Release]
+      testTargets:
+        - FaroTests
 
   FaroTests:
     type: bundle.unit-test
@@ -106,7 +107,3 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-    scheme:
-      testTargets:
-        - Faro
-      configVariants: [Debug]
