@@ -1,0 +1,10 @@
+.DS_Store
+/*.xcodeproj
+/Generated/
+/SourcePackages/
+/DerivedData/
+/build/
+/Payload/
+*.ipa
+.swiftpm/
+xcuserdata/
