@@ -17,27 +17,28 @@ struct BeamView: View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             let elapsed = timeline.date.timeIntervalSince(startDate)
             let degreesPerSecond = 10.0 + intensity * 50.0
-            let angle = Angle.degrees(elapsed * degreesPerSecond)
+            let baseDegrees = elapsed * degreesPerSecond
+            let spreadDegrees = 16.0
+            let baseRadians = baseDegrees * .pi / 180
 
             Canvas { context, size in
                 let center = CGPoint(x: size.width / 2, y: size.height / 2)
                 let length = max(size.width, size.height) * 0.75
-                let spread = Angle.degrees(16)
 
                 var wedge = Path()
                 wedge.move(to: center)
                 wedge.addArc(
                     center: center,
                     radius: length,
-                    startAngle: angle - spread / 2,
-                    endAngle: angle + spread / 2,
+                    startAngle: .degrees(baseDegrees - spreadDegrees / 2),
+                    endAngle: .degrees(baseDegrees + spreadDegrees / 2),
                     clockwise: false
                 )
                 wedge.closeSubpath()
 
                 let tip = CGPoint(
-                    x: center.x + cos(angle.radians) * length,
-                    y: center.y + sin(angle.radians) * length
+                    x: center.x + cos(baseRadians) * length,
+                    y: center.y + sin(baseRadians) * length
                 )
 
                 context.fill(
