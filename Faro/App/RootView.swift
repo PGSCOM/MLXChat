@@ -44,7 +44,10 @@ struct RootView: View {
     }
 
     private func createConversation() {
-        let conversation = Conversation(modelID: DefaultModel.repoID)
+        let conversation = Conversation(
+            modelID: DefaultModel.repoID,
+            systemPrompt: AppSettings.defaultSystemPrompt
+        )
         modelContext.insert(conversation)
         selectedID = conversation.id
     }

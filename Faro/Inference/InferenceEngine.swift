@@ -79,7 +79,8 @@ actor InferenceEngine {
         conversationID: UUID,
         modelID: String,
         systemPrompt: String,
-        history: [HistoryTurn]
+        history: [HistoryTurn],
+        settings: GenerationSettings
     ) async throws -> ChatSession {
         if let existing = sessions[conversationID] {
             return existing
@@ -89,7 +90,7 @@ actor InferenceEngine {
             container,
             instructions: systemPrompt.isEmpty ? nil : systemPrompt,
             history: chatMessages(from: history),
-            generateParameters: GenerateParameters(maxTokens: 2048, temperature: 0.6)
+            generateParameters: settings.makeParameters()
         )
         sessions[conversationID] = session
         return session
@@ -106,11 +107,12 @@ actor InferenceEngine {
         modelID: String,
         systemPrompt: String,
         history: [HistoryTurn],
+        settings: GenerationSettings,
         prompt: String
     ) async throws -> AsyncThrowingStream<Generation, Error> {
         let session = try await session(
             conversationID: conversationID, modelID: modelID,
-            systemPrompt: systemPrompt, history: history
+            systemPrompt: systemPrompt, history: history, settings: settings
         )
         return session.streamDetails(to: prompt)
     }

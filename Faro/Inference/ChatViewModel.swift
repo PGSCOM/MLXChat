@@ -49,13 +49,15 @@ final class ChatViewModel {
         let conversationID = conversation.id
         let modelID = conversation.modelID
         let systemPrompt = conversation.systemPrompt
+        let settings = conversation.effectiveGenerationSettings
 
         generateTask = Task {
             var splitter = ThinkTagSplitter()
             do {
                 let stream = try await InferenceEngine.shared.streamResponse(
                     conversationID: conversationID, modelID: modelID,
-                    systemPrompt: systemPrompt, history: history, prompt: text)
+                    systemPrompt: systemPrompt, history: history,
+                    settings: settings, prompt: text)
                 for try await generation in stream {
                     switch generation {
                     case .chunk(let piece):
@@ -104,6 +106,18 @@ final class ChatViewModel {
         guard modelID != conversation.modelID else { return }
         conversation.modelID = modelID
         try? modelContext.save()
+        invalidateSession()
+    }
+
+    /// Called when the generation-settings sheet is dismissed: the live
+    /// session (if any) still has the OLD `GenerateParameters` baked in,
+    /// so drop it and let the next turn build a fresh one.
+    func applyGenerationSettingsChange() {
+        try? modelContext.save()
+        invalidateSession()
+    }
+
+    private func invalidateSession() {
         let conversationID = conversation.id
         Task { await InferenceEngine.shared.invalidateSession(conversationID: conversationID) }
     }

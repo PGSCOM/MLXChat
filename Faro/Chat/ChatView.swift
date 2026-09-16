@@ -3,6 +3,7 @@ import SwiftUI
 struct ChatView: View {
     @State var viewModel: ChatViewModel
     @State private var showModelBrowser = false
+    @State private var showSettings = false
 
     var body: some View {
         ZStack {
@@ -36,6 +37,13 @@ struct ChatView: View {
         .toolbar {
             ToolbarItem {
                 Button {
+                    showSettings = true
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                }
+            }
+            ToolbarItem {
+                Button {
                     showModelBrowser = true
                 } label: {
                     Text(shortModelName)
@@ -48,6 +56,12 @@ struct ChatView: View {
             ModelBrowserView(
                 currentModelID: viewModel.conversation.modelID,
                 onSelect: viewModel.changeModel
+            )
+        }
+        .sheet(isPresented: $showSettings) {
+            GenerationSettingsSheet(
+                conversation: viewModel.conversation,
+                onDismiss: viewModel.applyGenerationSettingsChange
             )
         }
     }
