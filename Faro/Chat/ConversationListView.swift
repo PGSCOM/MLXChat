@@ -8,6 +8,7 @@ struct ConversationListView: View {
     let onDelete: (Conversation) -> Void
 
     @State private var showServerPanel = false
+    @State private var showMCPServers = false
 
     var body: some View {
         List(selection: $selection) {
@@ -33,6 +34,13 @@ struct ConversationListView: View {
         .toolbar {
             ToolbarItem {
                 Button {
+                    showMCPServers = true
+                } label: {
+                    Image(systemName: "wrench.and.screwdriver")
+                }
+            }
+            ToolbarItem {
+                Button {
                     showServerPanel = true
                 } label: {
                     Image(systemName: "network")
@@ -46,6 +54,9 @@ struct ConversationListView: View {
         }
         .sheet(isPresented: $showServerPanel) {
             ServerPanelView()
+        }
+        .sheet(isPresented: $showMCPServers) {
+            MCPServersView()
         }
     }
 }

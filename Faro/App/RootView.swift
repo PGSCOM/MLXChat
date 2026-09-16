@@ -60,5 +60,5 @@ struct RootView: View {
 
 #Preview {
     RootView()
-        .modelContainer(for: [Conversation.self, ChatMessage.self], inMemory: true)
+        .modelContainer(for: [Conversation.self, ChatMessage.self, MCPServerConfig.self], inMemory: true)
 }

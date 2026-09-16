@@ -86,11 +86,14 @@ actor InferenceEngine {
             return existing
         }
         let container = try await loadContainer(modelID: modelID)
+        let tools = await MCPConnectionManager.shared.enabledToolSpecs()
         let session = ChatSession(
             container,
             instructions: systemPrompt.isEmpty ? nil : systemPrompt,
             history: chatMessages(from: history),
-            generateParameters: settings.makeParameters()
+            generateParameters: settings.makeParameters(),
+            tools: tools.isEmpty ? nil : tools,
+            toolDispatch: tools.isEmpty ? nil : { call in try await MCPConnectionManager.shared.dispatch(call) }
         )
         sessions[conversationID] = session
         return session
