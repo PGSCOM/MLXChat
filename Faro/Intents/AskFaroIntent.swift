@@ -7,11 +7,14 @@ import MLXLMCommon
 /// background App Intents get, so it's more honest to bring the app
 /// forward than to risk Siri silently killing a mid-size model mid-reply.
 struct AskFaroIntent: AppIntent {
-    static var title: LocalizedStringResource = "Preguntar a Faro"
-    static var description = IntentDescription(
-        "Envía una pregunta a un modelo de IA que corre en este dispositivo, sin conexión."
-    )
-    static var openAppWhenRun: Bool = true
+    // Computed, not stored: a `static var` holding a literal is flagged
+    // under Swift 6 strict concurrency as unsynchronized global mutable
+    // state, even though it never actually changes.
+    static var title: LocalizedStringResource { "Preguntar a Faro" }
+    static var description: IntentDescription {
+        IntentDescription("Envía una pregunta a un modelo de IA que corre en este dispositivo, sin conexión.")
+    }
+    static var openAppWhenRun: Bool { true }
 
     @Parameter(title: "Pregunta")
     var prompt: String
