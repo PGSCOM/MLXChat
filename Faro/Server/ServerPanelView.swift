@@ -71,7 +71,7 @@ struct ServerPanelView: View {
 
                 if let error = server.lastError {
                     Section {
-                        Text(error).foregroundStyle(FaroColor.beamFar)
+                        Text(error).foregroundStyle(FaroColor.error)
                     }
                 }
             }

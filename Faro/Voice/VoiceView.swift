@@ -10,6 +10,20 @@ struct VoiceView: View {
             FaroColor.ink.ignoresSafeArea()
 
             VStack(spacing: 24) {
+                HStack {
+                    Spacer()
+                    Button {
+                        voice.cancel()
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(FaroColor.ash)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+
                 Spacer()
 
                 BeamView(intensity: beamIntensity)
@@ -26,7 +40,7 @@ struct VoiceView: View {
                 if let error = voice.errorMessage {
                     Text(error)
                         .font(.footnote)
-                        .foregroundStyle(FaroColor.beamFar)
+                        .foregroundStyle(FaroColor.error)
                         .padding(.horizontal, 32)
                 }
 
@@ -40,6 +54,7 @@ struct VoiceView: View {
                         .background(FaroColor.beamCore, in: .circle)
                 }
                 .disabled(voice.state == .thinking || voice.state == .speaking)
+                .opacity(voice.state == .thinking || voice.state == .speaking ? 0.4 : 1)
                 .padding(.bottom, 40)
             }
         }
@@ -52,14 +67,6 @@ struct VoiceView: View {
         .onChange(of: viewModel.isGenerating) { _, isGenerating in
             guard !isGenerating, voice.state == .thinking else { return }
             voice.speak(viewModel.messages.last?.content ?? "")
-        }
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cerrar") {
-                    voice.cancel()
-                    dismiss()
-                }
-            }
         }
     }
 

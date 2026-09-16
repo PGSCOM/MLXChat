@@ -10,6 +10,10 @@ enum FaroColor {
     static let beamMid = Color(hex: 0x3B6FF0)
     static let beamFar = Color(hex: 0x6B3BD8)
     static let ash = Color(hex: 0xA8AEC8)
+    /// Errors, exclusively. Never the beam's violet — that color belongs
+    /// only inside `BeamView`, and violet doesn't read as "wrong" anyway.
+    /// A tonal terracotta, muted rather than a poster-bright red.
+    static let error = Color(hex: 0xE0654F)
 }
 
 extension Color {

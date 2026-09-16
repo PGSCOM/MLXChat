@@ -26,7 +26,7 @@ struct ChatView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(FaroColor.beamFar.opacity(0.4), in: .rect(cornerRadius: 12))
+                            .background(FaroColor.error.opacity(0.4), in: .rect(cornerRadius: 12))
                     }
                     ComposerView(viewModel: viewModel)
                 }

@@ -45,7 +45,11 @@ struct ComposerView: View {
                 } label: {
                     Image(systemName: viewModel.isGenerating ? "stop.fill" : "arrow.up")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(FaroColor.ink)
+                        // Dark icon only reads against the bright fill;
+                        // on the dim inactive fill it drops to ~1.8:1
+                        // contrast (should stay above 4.5:1), so the
+                        // icon color follows the background's lightness.
+                        .foregroundStyle(canSend ? FaroColor.ink : FaroColor.ash)
                         .frame(width: 34, height: 34)
                         .background(canSend ? FaroColor.beamCore : FaroColor.ash.opacity(0.3), in: .circle)
                 }

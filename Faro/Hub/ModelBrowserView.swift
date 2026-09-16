@@ -113,7 +113,7 @@ private struct ModelRow: View {
                     if let error = coordinator.errors[id] {
                         Text(error)
                             .font(.caption2)
-                            .foregroundStyle(FaroColor.beamFar)
+                            .foregroundStyle(FaroColor.error)
                     }
                 }
                 Spacer()

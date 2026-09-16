@@ -45,7 +45,7 @@ struct MCPServersView: View {
                             }
                         }
                         if let error = errors[server.id] {
-                            Text(error).font(.caption).foregroundStyle(FaroColor.beamFar)
+                            Text(error).font(.caption).foregroundStyle(FaroColor.error)
                         }
                     }
                 }
