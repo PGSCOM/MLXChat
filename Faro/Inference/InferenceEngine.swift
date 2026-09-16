@@ -87,13 +87,23 @@ actor InferenceEngine {
         }
         let container = try await loadContainer(modelID: modelID)
         let tools = await MCPConnectionManager.shared.enabledToolSpecs()
+
+        // Pulled out with explicit types: a ternary between `nil` and a
+        // closure literal, inlined as a call argument, previously made
+        // the type-checker crash instead of diagnosing (same class of
+        // bug as the ComposerView fix in Fase 1).
+        let toolSpecs: [ToolSpec]? = tools.isEmpty ? nil : tools
+        let dispatch: (@Sendable (ToolCall) async throws -> String)? = tools.isEmpty
+            ? nil
+            : { call in try await MCPConnectionManager.shared.dispatch(call) }
+
         let session = ChatSession(
             container,
             instructions: systemPrompt.isEmpty ? nil : systemPrompt,
             history: chatMessages(from: history),
             generateParameters: settings.makeParameters(),
-            tools: tools.isEmpty ? nil : tools,
-            toolDispatch: tools.isEmpty ? nil : { call in try await MCPConnectionManager.shared.dispatch(call) }
+            tools: toolSpecs,
+            toolDispatch: dispatch
         )
         sessions[conversationID] = session
         return session
