@@ -15,7 +15,9 @@ struct ComposerView: View {
                 .focused($focused)
                 .onSubmit(send)
 
-            Button(action: viewModel.isGenerating ? viewModel.cancel : send) {
+            Button {
+                if viewModel.isGenerating { viewModel.cancel() } else { send() }
+            } label: {
                 Image(systemName: viewModel.isGenerating ? "stop.fill" : "arrow.up")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(FaroColor.ink)

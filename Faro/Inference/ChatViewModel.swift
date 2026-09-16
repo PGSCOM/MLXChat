@@ -7,7 +7,7 @@ import MLXLMCommon
 @MainActor
 final class ChatViewModel {
     let conversation: Conversation
-    private let modelContext: ModelContext
+    private let modelContext: SwiftData.ModelContext
 
     private(set) var isGenerating = false
     private(set) var tokensPerSecond: Double = 0
@@ -16,7 +16,7 @@ final class ChatViewModel {
 
     private var generateTask: Task<Void, Never>?
 
-    init(conversation: Conversation, modelContext: ModelContext) {
+    init(conversation: Conversation, modelContext: SwiftData.ModelContext) {
         self.conversation = conversation
         self.modelContext = modelContext
     }
