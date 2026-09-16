@@ -8,11 +8,7 @@ struct MessageView: View {
         case .user:
             HStack {
                 Spacer(minLength: 48)
-                MarkdownText(content: message.content)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(FaroColor.inkRaised, in: .rect(cornerRadius: 16))
+                UserBubble(content: message.content)
             }
         case .assistant:
             VStack(alignment: .leading, spacing: 8) {
@@ -38,6 +34,39 @@ struct MessageView: View {
         case .system:
             EmptyView()
         }
+    }
+}
+
+/// A pasted file (Fase 6 attachments) can make a user message huge —
+/// this keeps the bubble readable without ever hiding the real content
+/// behind opacity or an entrance animation; it's a plain length cap the
+/// person can lift, same idea as the reasoning disclosure above.
+private struct UserBubble: View {
+    let content: String
+    @State private var expanded = false
+    private static let previewLimit = 600
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            MarkdownText(content: displayedContent)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(FaroColor.inkRaised, in: .rect(cornerRadius: 16))
+
+            if content.count > Self.previewLimit {
+                Button(expanded ? "Mostrar menos" : "Mostrar todo") {
+                    expanded.toggle()
+                }
+                .font(.caption)
+                .foregroundStyle(FaroColor.ash)
+            }
+        }
+    }
+
+    private var displayedContent: String {
+        guard !expanded, content.count > Self.previewLimit else { return content }
+        return String(content.prefix(Self.previewLimit)) + "…"
     }
 }
 

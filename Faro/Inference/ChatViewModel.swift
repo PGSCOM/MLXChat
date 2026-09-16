@@ -13,6 +13,7 @@ final class ChatViewModel {
     private(set) var tokensPerSecond: Double = 0
     var errorMessage: String?
     var draft = ""
+    private(set) var pendingAttachment: ExtractedAttachment?
 
     private var generateTask: Task<Void, Never>?
 
@@ -25,11 +26,30 @@ final class ChatViewModel {
         conversation.messages.sorted { $0.createdAt < $1.createdAt }
     }
 
+    func attach(url: URL) {
+        do {
+            pendingAttachment = try AttachmentExtractor.extractText(from: url)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func removeAttachment() {
+        pendingAttachment = nil
+    }
+
     func send() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !isGenerating else { return }
+        let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty || pendingAttachment != nil, !isGenerating else { return }
         draft = ""
         errorMessage = nil
+
+        var text = typed.isEmpty ? "Resume este archivo." : typed
+        if let attachment = pendingAttachment {
+            let notice = attachment.wasTruncated ? "\n\n[el archivo se truncó por longitud]" : ""
+            text = "Archivo adjunto: \(attachment.fileName)\n\n\(attachment.text)\(notice)\n\n---\n\n\(text)"
+            pendingAttachment = nil
+        }
 
         // History excludes this turn: the user text goes in as the prompt,
         // and the empty assistant placeholder is filled in place as it streams.

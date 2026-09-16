@@ -4,6 +4,7 @@ struct ChatView: View {
     @State var viewModel: ChatViewModel
     @State private var showModelBrowser = false
     @State private var showSettings = false
+    @State private var showVoice = false
 
     var body: some View {
         ZStack {
@@ -37,6 +38,13 @@ struct ChatView: View {
         .toolbar {
             ToolbarItem {
                 Button {
+                    showVoice = true
+                } label: {
+                    Image(systemName: "mic")
+                }
+            }
+            ToolbarItem {
+                Button {
                     showSettings = true
                 } label: {
                     Image(systemName: "slider.horizontal.3")
@@ -63,6 +71,9 @@ struct ChatView: View {
                 conversation: viewModel.conversation,
                 onDismiss: viewModel.applyGenerationSettingsChange
             )
+        }
+        .fullScreenCover(isPresented: $showVoice) {
+            VoiceView(viewModel: viewModel)
         }
     }
 
