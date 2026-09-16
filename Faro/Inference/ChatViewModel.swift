@@ -99,4 +99,12 @@ final class ChatViewModel {
     func cancel() {
         generateTask?.cancel()
     }
+
+    func changeModel(to modelID: String) {
+        guard modelID != conversation.modelID else { return }
+        conversation.modelID = modelID
+        try? modelContext.save()
+        let conversationID = conversation.id
+        Task { await InferenceEngine.shared.invalidateSession(conversationID: conversationID) }
+    }
 }

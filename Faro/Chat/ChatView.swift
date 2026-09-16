@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ChatView: View {
     @State var viewModel: ChatViewModel
+    @State private var showModelBrowser = false
 
     var body: some View {
         ZStack {
@@ -32,6 +33,28 @@ struct ChatView: View {
             }
         }
         .navigationTitle(viewModel.conversation.title)
+        .toolbar {
+            ToolbarItem {
+                Button {
+                    showModelBrowser = true
+                } label: {
+                    Text(shortModelName)
+                        .font(.footnote)
+                        .foregroundStyle(FaroColor.ash)
+                }
+            }
+        }
+        .sheet(isPresented: $showModelBrowser) {
+            ModelBrowserView(
+                currentModelID: viewModel.conversation.modelID,
+                onSelect: viewModel.changeModel
+            )
+        }
+    }
+
+    private var shortModelName: String {
+        viewModel.conversation.modelID.split(separator: "/").last.map(String.init)
+            ?? viewModel.conversation.modelID
     }
 
     private var emptyState: some View {

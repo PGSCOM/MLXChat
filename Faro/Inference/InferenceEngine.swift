@@ -40,6 +40,13 @@ actor InferenceEngine {
     /// Downloads (if needed) and loads any Hugging Face repo id — not
     /// limited to a fixed registry. Cached per repo id for the process
     /// lifetime.
+    ///
+    /// ponytail: uses the macro's default `HubClient`, whose cache lands
+    /// under `Library/Caches` — iOS is allowed to purge that under disk
+    /// pressure, which would silently re-trigger a multi-GB re-download.
+    /// Upgrade path: replace `#huggingFaceLoadModelContainer` with the
+    /// hand-rolled `Downloader` conformance pointed at a `HubCache` in
+    /// `Application Support`, if this turns out to actually happen.
     func loadContainer(
         modelID: String,
         progress: @Sendable @escaping (Progress) -> Void = { _ in }
