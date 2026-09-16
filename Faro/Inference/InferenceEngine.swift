@@ -95,7 +95,9 @@ actor InferenceEngine {
         let toolSpecs: [ToolSpec]? = tools.isEmpty ? nil : tools
         let dispatch: (@Sendable (ToolCall) async throws -> String)? = tools.isEmpty
             ? nil
-            : { call in try await MCPConnectionManager.shared.dispatch(call) }
+            : { @Sendable (call: ToolCall) async throws -> String in
+                try await MCPConnectionManager.shared.dispatch(call)
+            }
 
         let session = ChatSession(
             container,
