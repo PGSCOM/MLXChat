@@ -7,6 +7,8 @@ struct ConversationListView: View {
     let onNew: () -> Void
     let onDelete: (Conversation) -> Void
 
+    @State private var showServerPanel = false
+
     var body: some View {
         List(selection: $selection) {
             ForEach(conversations) { conversation in
@@ -30,10 +32,20 @@ struct ConversationListView: View {
         .navigationTitle("Faro")
         .toolbar {
             ToolbarItem {
+                Button {
+                    showServerPanel = true
+                } label: {
+                    Image(systemName: "network")
+                }
+            }
+            ToolbarItem {
                 Button(action: onNew) {
                     Image(systemName: "square.and.pencil")
                 }
             }
+        }
+        .sheet(isPresented: $showServerPanel) {
+            ServerPanelView()
         }
     }
 }
