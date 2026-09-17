@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct MessageView: View {
     let message: ChatMessage
@@ -8,7 +9,7 @@ struct MessageView: View {
         case .user:
             HStack {
                 Spacer(minLength: 48)
-                UserBubble(content: message.content)
+                UserBubble(content: message.content, imageData: message.imageData)
             }
         case .assistant:
             VStack(alignment: .leading, spacing: 8) {
@@ -44,11 +45,19 @@ struct MessageView: View {
 /// person can lift, same idea as the reasoning disclosure above.
 private struct UserBubble: View {
     let content: String
+    let imageData: Data?
     @State private var expanded = false
     private static let previewLimit = 600
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
+            if let imageData, let image = UIImage(data: imageData) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 220, maxHeight: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+            }
             MarkdownText(content: displayedContent)
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14)

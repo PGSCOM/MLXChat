@@ -1,10 +1,16 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import PhotosUI
+import UIKit
 
 struct ComposerView: View {
     @Bindable var viewModel: ChatViewModel
     @FocusState private var focused: Bool
     @State private var showFileImporter = false
+    @State private var pickerItem: PhotosPickerItem?
+    @State private var isDropTargeted = false
+
+    private static let fileTypes: [UTType] = [.pdf, .plainText, .commaSeparatedText, .text]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -22,11 +28,34 @@ struct ComposerView: View {
                 .foregroundStyle(FaroColor.ash)
             }
 
+            if let imageData = viewModel.pendingImageData, let thumbnail = UIImage(data: imageData) {
+                HStack(spacing: 6) {
+                    Image(uiImage: thumbnail)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 36, height: 36)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    Button {
+                        viewModel.removeImage()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(FaroColor.ash)
+            }
+
             HStack(alignment: .bottom, spacing: 10) {
                 Button {
                     showFileImporter = true
                 } label: {
                     Image(systemName: "paperclip")
+                        .foregroundStyle(FaroColor.ash)
+                        .frame(width: 34, height: 34)
+                }
+
+                PhotosPicker(selection: $pickerItem, matching: .images) {
+                    Image(systemName: "photo")
                         .foregroundStyle(FaroColor.ash)
                         .frame(width: 34, height: 34)
                 }
@@ -56,16 +85,35 @@ struct ComposerView: View {
                 .disabled(!viewModel.isGenerating && !canSend)
             }
         }
+        // A hairline highlight while something hovers, so the drop target
+        // reads as live instead of doing nothing visibly until it lands.
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 18)
+                    .strokeBorder(FaroColor.beamCore, lineWidth: 1.5)
+            }
+        }
         .fileImporter(
             isPresented: $showFileImporter,
-            allowedContentTypes: [.pdf, .plainText, .commaSeparatedText, .text],
+            allowedContentTypes: Self.fileTypes,
             onCompletion: handlePickedFile
         )
+        .onChange(of: pickerItem) {
+            guard let pickerItem else { return }
+            Task {
+                if let data = try? await pickerItem.loadTransferable(type: Data.self) {
+                    viewModel.attachImage(data: data)
+                }
+            }
+            self.pickerItem = nil
+        }
+        .onDrop(of: [.image] + Self.fileTypes, isTargeted: $isDropTargeted, perform: handleDrop)
     }
 
     private var canSend: Bool {
         viewModel.isGenerating
             || viewModel.pendingAttachment != nil
+            || viewModel.pendingImageData != nil
             || !viewModel.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -79,5 +127,37 @@ struct ComposerView: View {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
         viewModel.attach(url: url)
+    }
+
+    /// Images take priority (a photo dragged from Photos also advertises
+    /// generic file types); everything else goes through the same
+    /// extractor the file picker uses.
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
+
+        if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                guard let data else { return }
+                Task { @MainActor in viewModel.attachImage(data: data) }
+            }
+            return true
+        }
+
+        for type in Self.fileTypes where provider.hasItemConformingToTypeIdentifier(type.identifier) {
+            provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
+                // Only valid synchronously here — the item provider may
+                // delete its temp file the moment this closure returns.
+                guard let url else { return }
+                do {
+                    let attachment = try AttachmentExtractor.extractText(from: url)
+                    Task { @MainActor in viewModel.setAttachment(attachment) }
+                } catch {
+                    Task { @MainActor in viewModel.errorMessage = error.localizedDescription }
+                }
+            }
+            return true
+        }
+
+        return false
     }
 }

@@ -17,13 +17,18 @@ final class ChatMessage {
     var reasoning: String?
     var createdAt: Date
     var tokensPerSecond: Double?
+    /// An image attached to a user message (drag-and-drop or the photo
+    /// picker), sent to vision-capable models. `.externalStorage` keeps
+    /// this out of the main SwiftData file instead of bloating it.
+    @Attribute(.externalStorage) var imageData: Data?
     var conversation: Conversation?
 
-    init(role: MessageRole, content: String, reasoning: String? = nil) {
+    init(role: MessageRole, content: String, reasoning: String? = nil, imageData: Data? = nil) {
         id = UUID()
         roleRaw = role.rawValue
         self.content = content
         self.reasoning = reasoning
+        self.imageData = imageData
         createdAt = .now
     }
 

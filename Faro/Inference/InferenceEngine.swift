@@ -1,4 +1,5 @@
 import Foundation
+import CoreImage
 import MLX
 import MLXLMCommon
 import MLXHuggingFace
@@ -9,10 +10,18 @@ import Tokenizers
 /// from `ChatMessage` (a SwiftData model, not Sendable) and from
 /// `Chat.Message` (MLXLMCommon's type, which can carry non-Sendable media
 /// like `CIImage`) so history can cross into the actor safely; the actor
-/// builds the real `Chat.Message` values itself from these.
+/// builds the real `Chat.Message` values itself from these. `imageData` is
+/// raw bytes for the same reason — `CIImage` itself doesn't cross safely.
 struct HistoryTurn: Sendable {
     let role: MessageRole
     let content: String
+    let imageData: Data?
+
+    init(role: MessageRole, content: String, imageData: Data? = nil) {
+        self.role = role
+        self.content = content
+        self.imageData = imageData
+    }
 }
 
 /// Owns every loaded model and chat session. An actor because
@@ -74,10 +83,17 @@ actor InferenceEngine {
         history.map { turn in
             switch turn.role {
             case .system: .system(turn.content)
-            case .user: .user(turn.content)
+            case .user: .user(turn.content, images: Self.images(from: turn.imageData))
             case .assistant: .assistant(turn.content)
             }
         }
+    }
+
+    /// Builds `UserInput.Image`s from raw bytes — only ever non-empty for
+    /// user turns, since only a user attaches an image.
+    private static func images(from data: Data?) -> [UserInput.Image] {
+        guard let data, let image = CIImage(data: data) else { return [] }
+        return [.ciImage(image)]
     }
 
     /// Returns the live session for a conversation, creating it (with the
@@ -132,6 +148,7 @@ actor InferenceEngine {
         history: [HistoryTurn],
         settings: GenerationSettings,
         prompt: String,
+        imageData: Data? = nil,
         progress: @Sendable @escaping (Progress) -> Void = { _ in }
     ) async throws -> AsyncThrowingStream<Generation, Error> {
         let session = try await session(
@@ -139,6 +156,6 @@ actor InferenceEngine {
             systemPrompt: systemPrompt, history: history, settings: settings,
             progress: progress
         )
-        return session.streamDetails(to: prompt)
+        return session.streamDetails(to: prompt, images: Self.images(from: imageData))
     }
 }

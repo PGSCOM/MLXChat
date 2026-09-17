@@ -14,6 +14,7 @@ final class ChatViewModel {
     var errorMessage: String?
     var draft = ""
     private(set) var pendingAttachment: ExtractedAttachment?
+    private(set) var pendingImageData: Data?
 
     private var generateTask: Task<Void, Never>?
 
@@ -34,28 +35,46 @@ final class ChatViewModel {
         }
     }
 
+    /// Used by drag-and-drop, which already extracts the file off the
+    /// main actor (the dropped item's temp file only lives for the
+    /// duration of the item provider's completion handler).
+    func setAttachment(_ attachment: ExtractedAttachment) {
+        pendingAttachment = attachment
+    }
+
     func removeAttachment() {
         pendingAttachment = nil
     }
 
+    func attachImage(data: Data) {
+        pendingImageData = data
+    }
+
+    func removeImage() {
+        pendingImageData = nil
+    }
+
     func send() {
         let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !typed.isEmpty || pendingAttachment != nil, !isGenerating else { return }
+        guard !typed.isEmpty || pendingAttachment != nil || pendingImageData != nil, !isGenerating else { return }
         draft = ""
         errorMessage = nil
 
-        var text = typed.isEmpty ? "Resume este archivo." : typed
+        let defaultText = pendingAttachment != nil ? "Resume este archivo." : "Describe esta imagen."
+        var text = typed.isEmpty ? defaultText : typed
         if let attachment = pendingAttachment {
             let notice = attachment.wasTruncated ? "\n\n[el archivo se truncó por longitud]" : ""
             text = "Archivo adjunto: \(attachment.fileName)\n\n\(attachment.text)\(notice)\n\n---\n\n\(text)"
             pendingAttachment = nil
         }
+        let imageData = pendingImageData
+        pendingImageData = nil
 
         // History excludes this turn: the user text goes in as the prompt,
         // and the empty assistant placeholder is filled in place as it streams.
-        let history = messages.map { HistoryTurn(role: $0.role, content: $0.content) }
+        let history = messages.map { HistoryTurn(role: $0.role, content: $0.content, imageData: $0.imageData) }
 
-        let userMessage = ChatMessage(role: .user, content: text)
+        let userMessage = ChatMessage(role: .user, content: text, imageData: imageData)
         userMessage.conversation = conversation
         modelContext.insert(userMessage)
         conversation.messages.append(userMessage)
@@ -85,7 +104,7 @@ final class ChatViewModel {
                 let stream = try await InferenceEngine.shared.streamResponse(
                     conversationID: conversationID, modelID: modelID,
                     systemPrompt: systemPrompt, history: history,
-                    settings: settings, prompt: promptForModel,
+                    settings: settings, prompt: promptForModel, imageData: imageData,
                     progress: { value in
                         // `.shared` referenced inside the hop, not captured
                         // by this `@Sendable` closure, since the coordinator
