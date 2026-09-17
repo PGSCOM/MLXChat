@@ -10,10 +10,30 @@ struct ModelBrowserView: View {
     @State private var results: [HuggingFaceSearchResult] = []
     @State private var isSearching = false
     @State private var searchError: String?
+    /// Bumped after a delete to force `downloadedModels` (a disk read, not
+    /// `@State`) to re-run — nothing else changes when a file disappears.
+    @State private var refreshToken = 0
 
     var body: some View {
         NavigationStack {
             List {
+                Section("Descargados") {
+                    if downloadedModels.isEmpty {
+                        Text("Ningún modelo descargado todavía.")
+                            .font(.caption)
+                            .foregroundStyle(FaroColor.ash)
+                    }
+                    ForEach(downloadedModels) { model in
+                        DownloadedModelRow(
+                            title: displayName(for: model.id),
+                            sizeBytes: model.sizeBytes,
+                            isSelected: model.id == currentModelID,
+                            onSelect: { select(model.id) },
+                            onDelete: { delete(model.id) }
+                        )
+                    }
+                }
+
                 Section("Recomendados") {
                     ForEach(CuratedModel.all) { model in
                         ModelRow(
@@ -79,6 +99,20 @@ struct ModelBrowserView: View {
         }
     }
 
+    /// Reads the cache fresh every render — a plain disk listing, not
+    /// `@State`, so it can never go stale. Also reads `coordinator.status`
+    /// so this view (not just the row that owns it) re-renders when any
+    /// download finishes and a new model lands on disk.
+    private var downloadedModels: [ModelCacheStore.DownloadedModel] {
+        _ = coordinator.status.count
+        _ = refreshToken
+        return ModelCacheStore.downloadedModels()
+    }
+
+    private func displayName(for id: String) -> String {
+        CuratedModel.all.first { $0.id == id }?.displayName ?? id
+    }
+
     private func subtitle(for model: CuratedModel) -> String {
         var parts = [String(format: "%.1f GB", model.approxSizeGB)]
         if model.isVision { parts.append("Visión") }
@@ -89,6 +123,53 @@ struct ModelBrowserView: View {
     private func select(_ id: String) {
         onSelect(id)
         dismiss()
+    }
+
+    private func delete(_ id: String) {
+        try? ModelCacheStore.delete(id)
+        Task { await InferenceEngine.shared.evictContainer(modelID: id) }
+        refreshToken += 1
+    }
+}
+
+private struct DownloadedModelRow: View {
+    let title: String
+    let sizeBytes: Int64
+    let isSelected: Bool
+    let onSelect: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack {
+            Button(action: onSelect) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Text(sizeBytes.formatted(.byteCount(style: .memory)))
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(FaroColor.ash)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(isSelected)
+
+            Spacer()
+
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(FaroColor.beamCore)
+            } else {
+                // Deleting the model in use would pull the cache out from
+                // under a live conversation, so that's the only state
+                // without a trash icon.
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .foregroundStyle(FaroColor.error)
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 }
 
@@ -136,7 +217,7 @@ private struct ModelRow: View {
             ProgressView(value: status.fraction)
                 .frame(width: 60)
                 .tint(FaroColor.beamCore)
-        } else if coordinator.ready.contains(id) {
+        } else if ModelCacheStore.isDownloaded(id) {
             Text("Usar")
                 .font(.caption.weight(.medium))
                 .foregroundStyle(FaroColor.beamCore)
@@ -149,9 +230,9 @@ private struct ModelRow: View {
     private func primaryAction() {
         if isSelected {
             return
-        } else if coordinator.ready.contains(id) {
+        } else if ModelCacheStore.isDownloaded(id) {
             onSelect()
-        } else if coordinator.progress[id] == nil {
+        } else if coordinator.status[id] == nil {
             coordinator.download(id: id)
         }
     }

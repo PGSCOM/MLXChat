@@ -63,6 +63,13 @@ actor InferenceEngine {
         return container
     }
 
+    /// Drops the in-memory container for a model — called after its files
+    /// are deleted from disk, so a future load re-downloads instead of
+    /// silently serving the now-orphaned in-memory copy.
+    func evictContainer(modelID: String) {
+        containers[modelID] = nil
+    }
+
     private func chatMessages(from history: [HistoryTurn]) -> [Chat.Message] {
         history.map { turn in
             switch turn.role {

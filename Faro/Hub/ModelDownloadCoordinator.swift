@@ -26,16 +26,10 @@ final class ModelDownloadCoordinator {
 
     private(set) var status: [String: ModelLoadStatus] = [:]
     private(set) var errors: [String: String] = [:]
-    private(set) var ready: Set<String> = []
 
     /// Last raw sample per model, to derive a smoothed speed/ETA — a lone
     /// `fractionCompleted` reading says nothing about rate.
     private var lastSample: [String: (date: Date, bytes: Int64)] = [:]
-
-    /// Backward-compat view for call sites that only need 0...1.
-    var progress: [String: Double] {
-        status.mapValues(\.fraction)
-    }
 
     func download(id: String) {
         guard status[id] == nil else { return }
@@ -53,7 +47,6 @@ final class ModelDownloadCoordinator {
                 _ = try await InferenceEngine.shared.loadContainer(modelID: id) { [weak self] value in
                     Task { @MainActor in self?.record(id: id, value: value) }
                 }
-                ready.insert(id)
                 status[id] = nil
                 lastSample[id] = nil
             } catch {

@@ -68,3 +68,17 @@ struct ThinkTagSplitterTests {
         #expect(result.content == "respuesta")
     }
 }
+
+struct ModelCacheStoreTests {
+    @Test func parsesARepoIDFromItsCacheDirectoryName() {
+        #expect(
+            ModelCacheStore.repoID(fromDirectoryName: "models--mlx-community--Qwen2.5-0.5B-Instruct-4bit")
+                == "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
+        )
+    }
+
+    @Test func rejectsNamesWithoutTheModelsPrefixOrANamespaceSeparator() {
+        #expect(ModelCacheStore.repoID(fromDirectoryName: "datasets--squad") == nil)
+        #expect(ModelCacheStore.repoID(fromDirectoryName: "models--incomplete") == nil)
+    }
+}
