@@ -12,6 +12,7 @@ struct ThinkTagSplitter {
 
     private var buffer = ""
     private var insideThink = false
+    private var hasSeenFirstTag = false
 
     struct Delta {
         var reasoning = ""
@@ -21,6 +22,7 @@ struct ThinkTagSplitter {
     /// Longest tag length minus one: how much tail to hold back so a tag
     /// split across chunk boundaries is still recognized next time.
     private static let maxLookback = max(openTag.count, closeTag.count) - 1
+    private static let unresolvedTagLimit = 4096
 
     mutating func consume(_ chunk: String) -> Delta {
         buffer += chunk
@@ -48,7 +50,10 @@ struct ThinkTagSplitter {
                 if insideThink || tag == Self.closeTag { delta.reasoning += piece } else { delta.content += piece }
                 buffer.removeSubrange(buffer.startIndex..<range.upperBound)
                 insideThink = tag == Self.openTag
+                hasSeenFirstTag = true
             } else {
+                guard hasSeenFirstTag || buffer.count > Self.unresolvedTagLimit else { break }
+                hasSeenFirstTag = true
                 let keep = Self.maxLookback
                 guard buffer.count > keep else { break }
                 let cut = buffer.index(buffer.endIndex, offsetBy: -keep)
