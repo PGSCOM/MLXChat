@@ -69,7 +69,7 @@ enum ModelCacheStore {
         ) else { return 0 }
         var total: Int64 = 0
         for case let fileURL as URL in enumerator {
-            guard let values = try? fileURL.resourceValues(keys: [.fileSizeKey, .isRegularFileKey]),
+            guard let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
                   values.isRegularFile == true else { continue }
             total += Int64(values.fileSize ?? 0)
         }
