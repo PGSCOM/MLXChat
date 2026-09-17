@@ -68,8 +68,16 @@ final class ChatViewModel {
         isGenerating = true
         let conversationID = conversation.id
         let modelID = conversation.modelID
-        let systemPrompt = conversation.systemPrompt
+        let effort = conversation.thinkingEffort
+        // The hint text goes to the model only — the saved/shown user
+        // message (`text`, already persisted above) stays clean.
+        let systemPrompt = [conversation.systemPrompt, effort.systemHint]
+            .filter { !$0.isEmpty }.joined(separator: "\n")
+        let promptForModel = text + effort.promptSuffix
         let settings = conversation.effectiveGenerationSettings
+
+        let downloadCoordinator = ModelDownloadCoordinator.shared
+        downloadCoordinator.beginLoad(id: modelID)
 
         generateTask = Task {
             var splitter = ThinkTagSplitter()
@@ -77,7 +85,14 @@ final class ChatViewModel {
                 let stream = try await InferenceEngine.shared.streamResponse(
                     conversationID: conversationID, modelID: modelID,
                     systemPrompt: systemPrompt, history: history,
-                    settings: settings, prompt: text)
+                    settings: settings, prompt: promptForModel,
+                    progress: { value in
+                        // `.shared` referenced inside the hop, not captured
+                        // by this `@Sendable` closure, since the coordinator
+                        // itself (a `@MainActor` class) isn't `Sendable`.
+                        Task { @MainActor in ModelDownloadCoordinator.shared.record(id: modelID, value: value) }
+                    })
+                downloadCoordinator.finishLoad(id: modelID)
                 for try await generation in stream {
                     switch generation {
                     case .chunk(let piece):
@@ -99,8 +114,10 @@ final class ChatViewModel {
                 }
             } catch is CancellationError {
                 // User cancelled: keep whatever streamed so far.
+                downloadCoordinator.finishLoad(id: modelID)
             } catch {
                 errorMessage = error.localizedDescription
+                downloadCoordinator.finishLoad(id: modelID)
             }
 
             // Whatever the splitter was still holding back as possible
@@ -120,6 +137,13 @@ final class ChatViewModel {
 
     func cancel() {
         generateTask?.cancel()
+    }
+
+    func setThinkingEffort(_ effort: ThinkingEffort) {
+        guard effort != conversation.thinkingEffort else { return }
+        conversation.thinkingEffort = effort
+        try? modelContext.save()
+        invalidateSession()
     }
 
     func changeModel(to modelID: String) {

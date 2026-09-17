@@ -33,6 +33,7 @@ struct AskFaroIntent: AppIntent {
         let resolvedModel = (modelID?.isEmpty == false) ? modelID! : DefaultModel.repoID
         let requestID = UUID()
         var answer = ""
+        var splitter = ThinkTagSplitter()
 
         do {
             let stream = try await InferenceEngine.shared.streamResponse(
@@ -44,8 +45,10 @@ struct AskFaroIntent: AppIntent {
                 prompt: prompt
             )
             for try await generation in stream {
-                if case .chunk(let piece) = generation { answer += piece }
+                // Siri would otherwise read the model's reasoning out loud.
+                if case .chunk(let piece) = generation { answer += splitter.consume(piece).content }
             }
+            answer += splitter.finish().content
         } catch {
             await InferenceEngine.shared.invalidateSession(conversationID: requestID)
             throw error

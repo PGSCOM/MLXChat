@@ -12,7 +12,8 @@ struct MessageView: View {
             }
         case .assistant:
             VStack(alignment: .leading, spacing: 8) {
-                if let reasoning = message.reasoning, !reasoning.isEmpty {
+                if let reasoning = message.reasoning,
+                   !reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     ReasoningDisclosure(text: reasoning)
                 }
                 if message.content.isEmpty {

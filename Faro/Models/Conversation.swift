@@ -10,6 +10,12 @@ final class Conversation {
     var modelID: String
     var systemPrompt: String
     var createdAt: Date
+    var thinkingEffortRaw: String = ThinkingEffort.normal.rawValue
+
+    var thinkingEffort: ThinkingEffort {
+        get { ThinkingEffort(rawValue: thinkingEffortRaw) ?? .normal }
+        set { thinkingEffortRaw = newValue.rawValue }
+    }
 
     // Generation settings. Recommended values are used unless
     // `useCustomGeneration` is on — see `effectiveGenerationSettings`.

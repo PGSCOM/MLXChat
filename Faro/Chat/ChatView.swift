@@ -5,6 +5,7 @@ struct ChatView: View {
     @State private var showModelBrowser = false
     @State private var showSettings = false
     @State private var showVoice = false
+    private let downloadCoordinator = ModelDownloadCoordinator.shared
 
     var body: some View {
         ZStack {
@@ -19,6 +20,9 @@ struct ChatView: View {
             VStack {
                 Spacer()
                 VStack(spacing: 8) {
+                    if let status = downloadCoordinator.status[viewModel.conversation.modelID] {
+                        ModelLoadBand(modelName: shortModelName, status: status)
+                    }
                     if let error = viewModel.errorMessage {
                         Text(error)
                             .font(.footnote)
@@ -48,6 +52,17 @@ struct ChatView: View {
                     showSettings = true
                 } label: {
                     Image(systemName: "slider.horizontal.3")
+                }
+            }
+            ToolbarItem {
+                Menu {
+                    ForEach(ThinkingEffort.allCases, id: \.self) { effort in
+                        Button(effort.label) { viewModel.setThinkingEffort(effort) }
+                    }
+                } label: {
+                    Text(viewModel.conversation.thinkingEffort.label)
+                        .font(.footnote)
+                        .foregroundStyle(FaroColor.ash)
                 }
             }
             ToolbarItem {
@@ -89,6 +104,30 @@ struct ChatView: View {
             Text("Empieza una conversación")
                 .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(FaroColor.ash)
+        }
+    }
+
+    private struct ModelLoadBand: View {
+        let modelName: String
+        let status: ModelLoadStatus
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("\(ModelLoadStatusFormatter.phaseLabel(status)) \(modelName)")
+                        .font(.footnote)
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Text(ModelLoadStatusFormatter.line(status))
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(FaroColor.ash)
+                }
+                ProgressView(value: status.fraction)
+                    .tint(FaroColor.beamCore)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(FaroColor.inkRaised, in: .rect(cornerRadius: 12))
         }
     }
 

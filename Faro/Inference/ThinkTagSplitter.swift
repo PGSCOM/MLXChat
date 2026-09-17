@@ -18,21 +18,38 @@ struct ThinkTagSplitter {
         var content = ""
     }
 
+    /// Longest tag length minus one: how much tail to hold back so a tag
+    /// split across chunk boundaries is still recognized next time.
+    private static let maxLookback = max(openTag.count, closeTag.count) - 1
+
     mutating func consume(_ chunk: String) -> Delta {
         buffer += chunk
         var delta = Delta()
 
         while true {
-            let tag = insideThink ? Self.closeTag : Self.openTag
+            // Outside a block, some reasoning-capable chat templates (Qwen3
+            // and kin) pre-inject the opening `<think>` into the prompt
+            // itself, so the model only ever emits the closing tag. Look for
+            // whichever tag actually shows up next instead of assuming the
+            // opener always arrives first.
+            let tag: String
+            if insideThink {
+                tag = Self.closeTag
+            } else if let openRange = buffer.range(of: Self.openTag) {
+                tag = buffer.range(of: Self.closeTag)
+                    .map { $0.lowerBound < openRange.lowerBound ? Self.closeTag : Self.openTag }
+                    ?? Self.openTag
+            } else {
+                tag = buffer.range(of: Self.closeTag) != nil ? Self.closeTag : Self.openTag
+            }
+
             if let range = buffer.range(of: tag) {
                 let piece = String(buffer[buffer.startIndex..<range.lowerBound])
-                if insideThink { delta.reasoning += piece } else { delta.content += piece }
+                if insideThink || tag == Self.closeTag { delta.reasoning += piece } else { delta.content += piece }
                 buffer.removeSubrange(buffer.startIndex..<range.upperBound)
-                insideThink.toggle()
+                insideThink = tag == Self.openTag
             } else {
-                // Keep enough of the tail that a tag split across chunk
-                // boundaries can still be recognized next time.
-                let keep = tag.count - 1
+                let keep = Self.maxLookback
                 guard buffer.count > keep else { break }
                 let cut = buffer.index(buffer.endIndex, offsetBy: -keep)
                 let piece = String(buffer[buffer.startIndex..<cut])

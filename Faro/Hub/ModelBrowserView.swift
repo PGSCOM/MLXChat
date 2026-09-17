@@ -5,7 +5,7 @@ struct ModelBrowserView: View {
     let onSelect: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var coordinator = ModelDownloadCoordinator()
+    private let coordinator = ModelDownloadCoordinator.shared
     @State private var query = ""
     @State private var results: [HuggingFaceSearchResult] = []
     @State private var isSearching = false
@@ -110,6 +110,11 @@ private struct ModelRow: View {
                     Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(FaroColor.ash)
+                    if let status = coordinator.status[id] {
+                        Text(ModelLoadStatusFormatter.line(status))
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(FaroColor.ash)
+                    }
                     if let error = coordinator.errors[id] {
                         Text(error)
                             .font(.caption2)
@@ -127,8 +132,8 @@ private struct ModelRow: View {
         if isSelected {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(FaroColor.beamCore)
-        } else if let value = coordinator.progress[id] {
-            ProgressView(value: value)
+        } else if let status = coordinator.status[id] {
+            ProgressView(value: status.fraction)
                 .frame(width: 60)
                 .tint(FaroColor.beamCore)
         } else if coordinator.ready.contains(id) {

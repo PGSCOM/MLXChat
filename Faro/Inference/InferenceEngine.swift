@@ -80,12 +80,13 @@ actor InferenceEngine {
         modelID: String,
         systemPrompt: String,
         history: [HistoryTurn],
-        settings: GenerationSettings
+        settings: GenerationSettings,
+        progress: @Sendable @escaping (Progress) -> Void
     ) async throws -> ChatSession {
         if let existing = sessions[conversationID] {
             return existing
         }
-        let container = try await loadContainer(modelID: modelID)
+        let container = try await loadContainer(modelID: modelID, progress: progress)
         let tools = await MCPConnectionManager.shared.enabledToolSpecs()
 
         // Pulled out with explicit types: a ternary between `nil` and a
@@ -123,11 +124,13 @@ actor InferenceEngine {
         systemPrompt: String,
         history: [HistoryTurn],
         settings: GenerationSettings,
-        prompt: String
+        prompt: String,
+        progress: @Sendable @escaping (Progress) -> Void = { _ in }
     ) async throws -> AsyncThrowingStream<Generation, Error> {
         let session = try await session(
             conversationID: conversationID, modelID: modelID,
-            systemPrompt: systemPrompt, history: history, settings: settings
+            systemPrompt: systemPrompt, history: history, settings: settings,
+            progress: progress
         )
         return session.streamDetails(to: prompt)
     }
