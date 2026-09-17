@@ -25,10 +25,10 @@ struct HistoryTurn: Sendable {
 }
 
 /// Owns every loaded model and chat session. An actor because
-/// `ChatSession` is documented as not thread-safe, and both the in-app
-/// chat and the future local API server (Fase 4) generate against the
+/// `ChatSession` is documented as not thread-safe, and the in-app chat,
+/// the local API server, and Siri/App Intents all generate against the
 /// same loaded model — this serializes them onto one queue instead of
-/// racing two sessions over one KV cache.
+/// racing multiple sessions over one KV cache.
 actor InferenceEngine {
     static let shared = InferenceEngine()
 
@@ -114,8 +114,7 @@ actor InferenceEngine {
 
         // Pulled out with explicit types: a ternary between `nil` and a
         // closure literal, inlined as a call argument, previously made
-        // the type-checker crash instead of diagnosing (same class of
-        // bug as the ComposerView fix in Fase 1).
+        // the type-checker crash instead of diagnosing.
         let toolSpecs: [ToolSpec]? = tools.isEmpty ? nil : tools
         let dispatch: (@Sendable (ToolCall) async throws -> String)? = tools.isEmpty
             ? nil

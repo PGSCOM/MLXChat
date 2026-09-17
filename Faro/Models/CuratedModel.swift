@@ -1,9 +1,8 @@
 import Foundation
 
 /// A short, hand-picked starting list. Real repo ids, verified against
-/// the Hugging Face API (not guessed) — the point of Fase 2 is that this
-/// list is a convenience, not a limit: the search tab below reaches any
-/// mlx-community (or other) repo directly.
+/// the Hugging Face API (not guessed) — a convenience, not a limit: the
+/// search tab reaches any mlx-community (or other) repo directly.
 struct CuratedModel: Identifiable, Sendable {
     let id: String
     let displayName: String

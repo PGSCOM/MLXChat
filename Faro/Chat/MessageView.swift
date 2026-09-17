@@ -39,8 +39,8 @@ struct MessageView: View {
     }
 }
 
-/// A pasted file (Fase 6 attachments) can make a user message huge —
-/// this keeps the bubble readable without ever hiding the real content
+/// A pasted file attachment can make a user message huge — this keeps
+/// the bubble readable without ever hiding the real content
 /// behind opacity or an entrance animation; it's a plain length cap the
 /// person can lift, same idea as the reasoning disclosure above.
 private struct UserBubble: View {

@@ -126,8 +126,8 @@ final class ChatViewModel {
                         tokensPerSecond = info.tokensPerSecond
                         assistantMessage.tokensPerSecond = info.tokensPerSecond
                     default:
-                        // Tool calls arrive with Fase 5 (cliente MCP); until
-                        // then anything other than text/stats is ignored.
+                        // Tool calls are resolved inside ChatSession itself
+                        // (see InferenceEngine); nothing else reaches here.
                         break
                     }
                 }
