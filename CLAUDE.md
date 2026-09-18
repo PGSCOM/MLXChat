@@ -118,6 +118,26 @@ and since that text has already been streamed out as content, the delta raises
 `contentWasReasoning` and every consumer moves what it already emitted into
 reasoning. Streaming immediately and correcting beats stalling the stream.
 
+### The second backend: Apple Foundation
+
+`AppleFoundationEngine` (`Faro/Inference/`) wraps Apple's on-device model
+behind the same signature as the MLX path — same `HistoryTurn` input, same
+`AsyncThrowingStream<Generation, Error>` out — so `streamResponse` only picks
+a branch, on the reserved id `AppleFoundationModel.id` (`"apple/foundation"`,
+a plain `String` in `Conversation.modelID`, so no schema change). That id is
+not a Hugging Face repo: `ModelDownloadCoordinator`, the load band and the
+preflight all have to skip it.
+
+**Every reference to `FoundationModels` lives in that one file**, and it is
+`@MainActor` rather than an actor on purpose: `SystemLanguageModel` and
+`LanguageModelSession` are the observable types Apple's samples drive from a
+view model, so pinning them to one known isolation beats guessing at their
+`Sendable` conformance under strict concurrency. It answers with a single
+`.chunk` — `streamResponse` there emits cumulative snapshots rather than
+deltas and the snapshot type for a `String` answer moves between SDK
+revisions, so `respond(to:)` is the stable surface (there's a `ponytail:`
+note with the upgrade path).
+
 ### Data model and settings
 
 `Conversation` and `ChatMessage` are the two SwiftData models
@@ -126,6 +146,19 @@ effort, and either the recommended `GenerationSettings` or a full set of
 custom overrides (`useCustomGeneration` gates `effectiveGenerationSettings`).
 `ChatMessage.imageData` uses `@Attribute(.externalStorage)` to keep attached
 images out of the main SwiftData store.
+
+App-wide preferences are `enum`s over `UserDefaults`, never SwiftData:
+`AppSettings` (`defaultSystemPrompt`, `lastModelID`), `VoiceSettings`
+(recognition locale + synthesis voice id) and `ServerSettings`. `lastModelID`
+is written in exactly one place — `ChatViewModel.changeModel(to:)`, which
+every model pick funnels through — and read by `DefaultModel.resolve`, which
+falls back to the curated default when the remembered model is no longer on
+disk. An existing conversation always keeps its own `modelID`; only *new*
+ones start from the remembered one.
+
+Settings are one screen (`Faro/Settings/SettingsView.swift`): models, voice,
+the local server and MCP are presented from it as sheets, unmodified, because
+each already brings its own `NavigationStack` and close button.
 
 ### The three callers of `InferenceEngine.streamResponse`
 
@@ -163,3 +196,13 @@ markdown rendering); `Faro/Hub/` is model discovery/download/deletion
 like an MLX model and fits recommended device memory before downloading);
 `Faro/Voice/` is the hands-free conversation mode; `Faro/Files/` extracts
 text from PDF/plain-text attachments for the prompt.
+
+`Faro/Voice/` deliberately stays on `SFSpeechRecognizer` (on-device via
+`requiresOnDeviceRecognition`, but only where
+`supportsOnDeviceRecognition` says the assets exist) rather than iOS 26's
+`SpeechAnalyzer` — see the note at the top of `VoiceSession.swift`. Two
+traps live there: anything handed to `AVSpeechSynthesis*` must be BCP-47
+(`Locale.identifier(.bcp47)`, not `Locale.identifier`, which is ICU and gets
+rejected), and the recognition-task error branch has to check the session is
+still `.listening`, because `stopListening()` cancels the task and that
+cancellation surfaces as an error *after* the state has already moved on.

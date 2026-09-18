@@ -12,13 +12,29 @@ struct ModelBrowserView: View {
     @State private var searchError: String?
     @State private var downloaded: [ModelCacheStore.DownloadedModel] = []
     @State private var pendingDeletion: ModelCacheStore.DownloadedModel?
+    @State private var pendingDeleteAll = false
+    @State private var appleIsAvailable = false
 
     private var downloadedIDs: Set<String> { Set(downloaded.map(\.id)) }
 
     var body: some View {
         NavigationStack {
             List {
-                Section("En este dispositivo") {
+                Section {
+                    AppleFoundationRow(
+                        isSelected: currentModelID == AppleFoundationModel.id,
+                        isAvailable: appleIsAvailable,
+                        onSelect: { select(AppleFoundationModel.id) }
+                    )
+                } header: {
+                    Text("Sistema")
+                } footer: {
+                    Text(appleIsAvailable
+                         ? "Ya está en el dispositivo: no ocupa espacio ni hay que descargarlo. Solo texto."
+                         : "Requiere Apple Intelligence activado en Ajustes.")
+                }
+
+                Section {
                     if downloaded.isEmpty {
                         Text("Ningún modelo descargado todavía.")
                             .font(.footnote)
@@ -33,6 +49,19 @@ struct ModelBrowserView: View {
                             onSelect: { select(model.id) },
                             onDelete: { pendingDeletion = model }
                         )
+                    }
+                } header: {
+                    Text("En este dispositivo")
+                } footer: {
+                    if !downloaded.isEmpty {
+                        HStack {
+                            Text("Almacenamiento usado: \(totalDownloadedBytes.formatted(.byteCount(style: .memory)))")
+                            Spacer(minLength: 8)
+                            if downloaded.contains(where: { $0.id != currentModelID }) {
+                                Button("Eliminar todos") { pendingDeleteAll = true }
+                                    .foregroundStyle(FaroColor.error)
+                            }
+                        }
                     }
                 }
 
@@ -91,6 +120,7 @@ struct ModelBrowserView: View {
             // finishes — the only things that change what's on disk while
             // this list is open.
             .task(id: coordinator.status.isEmpty) { await refreshDownloaded() }
+            .task { appleIsAvailable = AppleFoundationEngine.isAvailable }
             .task(id: query) { await runSearch() }
             .confirmationDialog(
                 pendingDeletion.map { "¿Borrar \(displayName(for: $0.id))?" } ?? "",
@@ -110,7 +140,30 @@ struct ModelBrowserView: View {
                     Text("Se liberarán \(model.sizeBytes.formatted(.byteCount(style: .memory))). Habrá que descargarlo otra vez para usarlo.")
                 }
             }
+            .confirmationDialog(
+                "¿Eliminar todos los modelos descargados?",
+                isPresented: $pendingDeleteAll,
+                titleVisibility: .visible
+            ) {
+                Button("Eliminar todos", role: .destructive) { deleteAll() }
+                Button("Cancelar", role: .cancel) { pendingDeleteAll = false }
+            } message: {
+                Text(deletableBytes == totalDownloadedBytes
+                     ? "Se liberarán \(deletableBytes.formatted(.byteCount(style: .memory)))."
+                     : "Se liberarán \(deletableBytes.formatted(.byteCount(style: .memory))). El modelo en uso se conserva.")
+            }
         }
+    }
+
+    private var totalDownloadedBytes: Int64 {
+        downloaded.reduce(0) { $0 + $1.sizeBytes }
+    }
+
+    /// The model in use is never deleted — pulling its cache out from
+    /// under a live conversation is the same rule the per-row delete
+    /// already enforces.
+    private var deletableBytes: Int64 {
+        downloaded.filter { $0.id != currentModelID }.reduce(0) { $0 + $1.sizeBytes }
     }
 
     /// The cache listing walks every blob on disk to add up sizes, so it
@@ -157,6 +210,13 @@ struct ModelBrowserView: View {
     private func select(_ id: String) {
         onSelect(id)
         dismiss()
+    }
+
+    private func deleteAll() {
+        pendingDeleteAll = false
+        for model in downloaded where model.id != currentModelID {
+            delete(model.id)
+        }
     }
 
     private func delete(_ id: String) {
@@ -288,5 +348,40 @@ private struct ModelRow: View {
         } else if coordinator.status[id] == nil {
             coordinator.download(id: id)
         }
+    }
+}
+
+
+/// Apple's model has no size, no download and no progress — every other
+/// row's chrome would be a lie here, so it gets its own plain row.
+private struct AppleFoundationRow: View {
+    let isSelected: Bool
+    let isAvailable: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(AppleFoundationModel.displayName)
+                        .foregroundStyle(isAvailable ? FaroColor.bone : FaroColor.ash)
+                    Text(isAvailable ? "Modelo de Apple en el dispositivo" : "Apple Intelligence no está activado")
+                        .font(.caption)
+                        .foregroundStyle(FaroColor.ash)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(FaroColor.lamp)
+                } else if isAvailable {
+                    Text("Usar")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(FaroColor.lamp)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!isAvailable || isSelected)
     }
 }
