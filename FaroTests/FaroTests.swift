@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Faro
 
@@ -125,5 +126,69 @@ struct ModelCacheStoreTests {
     @Test func rejectsNamesWithoutTheModelsPrefixOrANamespaceSeparator() {
         #expect(ModelCacheStore.repoID(fromDirectoryName: "datasets--squad") == nil)
         #expect(ModelCacheStore.repoID(fromDirectoryName: "models--incomplete") == nil)
+    }
+}
+
+struct DefaultModelTests {
+    @Test func startsFromTheLastModelTheUserPicked() {
+        #expect(DefaultModel.resolve(remembered: "a/b", downloaded: ["a/b", "c/d"]) == "a/b")
+    }
+
+    /// iOS may purge the cache, and the user can delete a model by hand —
+    /// either way a new conversation shouldn't open on a missing model.
+    @Test func fallsBackWhenTheRememberedModelIsGone() {
+        #expect(DefaultModel.resolve(remembered: "a/b", downloaded: []) == DefaultModel.repoID)
+    }
+
+    @Test func fallsBackWhenNothingWasEverPicked() {
+        #expect(DefaultModel.resolve(remembered: "", downloaded: ["a/b"]) == DefaultModel.repoID)
+    }
+
+    /// Apple's model never appears in the cache listing because it isn't
+    /// on disk at all.
+    @Test func keepsAppleFoundationWithoutAskingTheCache() {
+        #expect(
+            DefaultModel.resolve(remembered: AppleFoundationModel.id, downloaded: [])
+                == AppleFoundationModel.id
+        )
+    }
+}
+
+struct VoiceSettingsTests {
+    /// The exact bug this fixes: `AVSpeechSynthesisVoice(language:)` wants
+    /// BCP-47, and `Locale.identifier` alone hands it ICU with an
+    /// underscore, which it rejects.
+    @Test func languageTagUsesHyphensNotUnderscores() {
+        #expect(Locale(identifier: "es_ES").identifier(.bcp47) == "es-ES")
+    }
+
+    @Test func matchesTheExactLanguageTag() {
+        #expect(VoiceSettings.matches(voiceLanguage: "es-ES", preferred: "es-ES"))
+    }
+
+    @Test func matchesTheSameLanguageInAnotherRegion() {
+        #expect(VoiceSettings.matches(voiceLanguage: "es-MX", preferred: "es-ES"))
+    }
+
+    @Test func rejectsADifferentLanguage() {
+        #expect(!VoiceSettings.matches(voiceLanguage: "en-US", preferred: "es-ES"))
+    }
+}
+
+struct ReasoningCardTests {
+    @Test func namesTheBlockBeforeItHasADuration() {
+        #expect(ReasoningCard.durationLabel(nil) == "Pensamientos")
+        #expect(ReasoningCard.durationLabel(0.4) == "Pensamientos")
+    }
+
+    @Test func reportsSecondsAndMinutes() {
+        #expect(ReasoningCard.durationLabel(23) == "Razonó durante 23 s")
+        #expect(ReasoningCard.durationLabel(95) == "Razonó durante 1 min 35 s")
+    }
+
+    @Test func countsUpFromTheStartOfThePhase() {
+        let start = Date(timeIntervalSince1970: 0)
+        #expect(ReasoningCard.elapsedLabel(since: start, at: start.addingTimeInterval(7)) == "7 s")
+        #expect(ReasoningCard.elapsedLabel(since: start, at: start.addingTimeInterval(65)) == "1 min 5 s")
     }
 }

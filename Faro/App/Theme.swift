@@ -29,3 +29,16 @@ extension Color {
         )
     }
 }
+
+extension View {
+    /// The one raised surface in the app: a fill a shade above the page
+    /// plus a hairline in the surface's own colour — a lip catching the
+    /// lamp, not a drawn outline. Every card used to hand-roll this with a
+    /// different radius (14, 16, 18); that was drift, not intent.
+    func faroCard(border: Color = FaroColor.edge) -> some View {
+        background(FaroColor.inkRaised, in: .rect(cornerRadius: 16))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16).strokeBorder(border, lineWidth: 1)
+            }
+    }
+}

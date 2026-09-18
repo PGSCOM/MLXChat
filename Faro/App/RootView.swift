@@ -52,7 +52,10 @@ struct RootView: View {
 
     private func createConversation() {
         let conversation = Conversation(
-            modelID: DefaultModel.repoID,
+            modelID: DefaultModel.resolve(
+                remembered: AppSettings.lastModelID,
+                downloaded: ModelCacheStore.downloadedIDs()
+            ),
             systemPrompt: AppSettings.defaultSystemPrompt
         )
         modelContext.insert(conversation)

@@ -3,6 +3,7 @@ import SwiftUI
 struct VoiceView: View {
     @Bindable var viewModel: ChatViewModel
     @State private var voice = VoiceSession()
+    @State private var showVoiceSettings = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -11,6 +12,17 @@ struct VoiceView: View {
 
             VStack(spacing: 24) {
                 HStack {
+                    // The language being wrong is something you notice
+                    // here, not three screens away in settings.
+                    Button {
+                        showVoiceSettings = true
+                    } label: {
+                        Image(systemName: "globe")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(FaroColor.ash)
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Idioma y voz")
                     Spacer()
                     Button {
                         voice.cancel()
@@ -73,6 +85,9 @@ struct VoiceView: View {
             voice.speak(lastAnswer)
         }
         .onDisappear { voice.cancel() }
+        .sheet(isPresented: $showVoiceSettings) {
+            VoiceSettingsView()
+        }
     }
 
     private var canTalk: Bool { voice.state == .idle || voice.state == .listening }

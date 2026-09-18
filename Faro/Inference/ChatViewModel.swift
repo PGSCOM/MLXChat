@@ -119,7 +119,11 @@ final class ChatViewModel {
         let settings = conversation.effectiveGenerationSettings
 
         let downloadCoordinator = ModelDownloadCoordinator.shared
-        downloadCoordinator.beginLoad(id: modelID)
+        // Apple's model is already on the device: there is no download or
+        // paging-in to report, so no load band either.
+        if !AppleFoundationModel.isAppleFoundation(modelID) {
+            downloadCoordinator.beginLoad(id: modelID)
+        }
 
         generateTask = Task {
             var splitter = ThinkTagSplitter()
@@ -137,6 +141,9 @@ final class ChatViewModel {
                         Task { @MainActor in ModelDownloadCoordinator.shared.record(id: modelID, value: value) }
                     })
                 downloadCoordinator.finishLoad(id: modelID)
+                // The model is in memory and the first token hasn't landed
+                // yet — that wait is thinking, not preparing.
+                enter(.thinking)
                 for try await generation in stream {
                     switch generation {
                     case .chunk(let piece):
@@ -213,6 +220,9 @@ final class ChatViewModel {
     func changeModel(to modelID: String) {
         guard modelID != conversation.modelID else { return }
         conversation.modelID = modelID
+        // Every model pick in the app funnels through here, so this is the
+        // one place that has to remember it for the next new conversation.
+        AppSettings.lastModelID = modelID
         try? modelContext.save()
         invalidateSession()
     }

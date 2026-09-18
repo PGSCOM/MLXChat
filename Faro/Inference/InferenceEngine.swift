@@ -146,6 +146,9 @@ actor InferenceEngine {
     /// changing its model) so the next turn rebuilds it from scratch.
     func invalidateSession(conversationID: UUID) {
         sessions[conversationID] = nil
+        Task { @MainActor in
+            AppleFoundationEngine.shared.invalidateSession(conversationID: conversationID)
+        }
     }
 
     func streamResponse(
@@ -158,6 +161,14 @@ actor InferenceEngine {
         imageData: Data? = nil,
         progress: @Sendable @escaping (Progress) -> Void = { _ in }
     ) async throws -> AsyncThrowingStream<Generation, Error> {
+        // Apple's model isn't a Hugging Face repo: branch before anything
+        // touches MLX, the container cache or HubCache.
+        if AppleFoundationModel.isAppleFoundation(modelID) {
+            return try await AppleFoundationEngine.shared.streamResponse(
+                conversationID: conversationID, systemPrompt: systemPrompt,
+                history: history, settings: settings, prompt: prompt, imageData: imageData
+            )
+        }
         let session = try await session(
             conversationID: conversationID, modelID: modelID,
             systemPrompt: systemPrompt, history: history, settings: settings,
