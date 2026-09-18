@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ServerPanelView: View {
     @State private var server = APIServer.shared
@@ -18,7 +19,7 @@ struct ServerPanelView: View {
                             set: { $0 ? server.start() : server.stop() }
                         )
                     )
-                    .tint(FaroColor.beamCore)
+                    .tint(FaroColor.lamp)
                 } footer: {
                     Text("El servidor solo responde mientras Faro está abierto en primer plano.")
                 }
@@ -26,11 +27,7 @@ struct ServerPanelView: View {
                 if server.isRunning {
                     Section("Conexión") {
                         if let interface = selectedInterface ?? interfaces.first {
-                            LabeledContent("Dirección") {
-                                Text("http://\(interface.ip):\(ServerSettings.port)")
-                                    .font(.system(.footnote, design: .monospaced))
-                                    .textSelection(.enabled)
-                            }
+                            CopyableValue(title: "Dirección", value: "http://\(interface.ip):\(ServerSettings.port)")
                         } else {
                             Text("No se encontró ninguna red activa.")
                                 .foregroundStyle(FaroColor.ash)
@@ -47,9 +44,7 @@ struct ServerPanelView: View {
 
                     Section("Token") {
                         if showToken {
-                            Text(ServerSettings.bearerToken)
-                                .font(.system(.footnote, design: .monospaced))
-                                .textSelection(.enabled)
+                            CopyableValue(title: "Bearer", value: ServerSettings.bearerToken)
                         } else {
                             Button("Mostrar token") { showToken = true }
                         }
@@ -82,6 +77,42 @@ struct ServerPanelView: View {
                 }
             }
             .onAppear { interfaces = LANAddress.activeIPv4Addresses() }
+        }
+    }
+}
+
+/// An address or a token is meant to be typed into another device, so it
+/// gets a copy action rather than only being selectable.
+private struct CopyableValue: View {
+    let title: String
+    let value: String
+    @State private var copied = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(.system(.footnote, design: .monospaced))
+                .foregroundStyle(FaroColor.ash)
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Button {
+                UIPasteboard.general.string = value
+                copied = true
+            } label: {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(copied ? FaroColor.lamp : FaroColor.ash)
+            .accessibilityLabel("Copiar \(title)")
+        }
+        .task(id: copied) {
+            guard copied else { return }
+            try? await Task.sleep(for: .seconds(2))
+            copied = false
         }
     }
 }

@@ -12,12 +12,18 @@ struct ConversationListView: View {
 
     var body: some View {
         List(selection: $selection) {
+            if conversations.isEmpty {
+                Text("Todavía no hay conversaciones.")
+                    .font(.footnote)
+                    .foregroundStyle(FaroColor.ash)
+                    .listRowBackground(Color.clear)
+            }
             ForEach(conversations) { conversation in
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(conversation.title)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(FaroColor.bone)
                         .lineLimit(1)
-                    Text(conversation.createdAt, style: .date)
+                    Text(conversation.createdAt.formatted(.relative(presentation: .named)))
                         .font(.caption)
                         .foregroundStyle(FaroColor.ash)
                 }
@@ -28,6 +34,7 @@ struct ConversationListView: View {
             }
         }
         .listStyle(.sidebar)
+        .tint(FaroColor.lamp)
         .scrollContentBackground(.hidden)
         .background(FaroColor.ink)
         .navigationTitle("Faro")
@@ -38,6 +45,7 @@ struct ConversationListView: View {
                 } label: {
                     Image(systemName: "wrench.and.screwdriver")
                 }
+                .accessibilityLabel("Herramientas MCP")
             }
             ToolbarItem {
                 Button {
@@ -45,11 +53,13 @@ struct ConversationListView: View {
                 } label: {
                     Image(systemName: "network")
                 }
+                .accessibilityLabel("Servidor local")
             }
             ToolbarItem {
                 Button(action: onNew) {
                     Image(systemName: "square.and.pencil")
                 }
+                .accessibilityLabel("Nueva conversación")
             }
         }
         .sheet(isPresented: $showServerPanel) {

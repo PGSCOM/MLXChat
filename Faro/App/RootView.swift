@@ -31,14 +31,21 @@ struct RootView: View {
     private var emptyDetail: some View {
         ZStack {
             FaroColor.ink.ignoresSafeArea()
-            VStack(spacing: 16) {
+            VStack(spacing: 8) {
                 BeamView(intensity: 0.2)
                     .frame(width: 220, height: 220)
                 Text("Faro")
-                    .font(.system(size: 32, weight: .semibold, design: .serif))
-                    .foregroundStyle(.white)
-                Button("Nueva conversación", action: createConversation)
-                    .foregroundStyle(FaroColor.beamCore)
+                    .font(.system(size: 34, weight: .regular, design: .serif))
+                    .foregroundStyle(FaroColor.bone)
+                Button(action: createConversation) {
+                    Text("Nueva conversación")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(FaroColor.ink)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 10)
+                        .background(FaroColor.bone, in: .rect(cornerRadius: 14))
+                }
+                .padding(.top, 20)
             }
         }
     }

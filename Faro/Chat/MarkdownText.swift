@@ -10,9 +10,13 @@ import SwiftUI
 /// only if tables/highlighting are actually requested.
 struct MarkdownText: View {
     let content: String
+    /// Off while the answer is still streaming: parsing the whole string
+    /// again on every token is work thrown away, and half-written markup
+    /// renders wrong anyway. The text itself is always shown either way.
+    var parsed = true
 
     var body: some View {
-        Text(attributed)
+        Text(parsed ? attributed : AttributedString(content))
             .textSelection(.enabled)
     }
 

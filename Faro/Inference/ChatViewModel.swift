@@ -3,14 +3,27 @@ import Observation
 import SwiftData
 import MLXLMCommon
 
+/// What the current turn is actually doing, so the transcript can say so
+/// instead of showing an unexplained spinner. Drives both the live status
+/// line and `isGenerating`.
+enum TurnPhase: Equatable, Sendable {
+    case idle
+    case preparing
+    case thinking
+    case writing
+}
+
 @Observable
 @MainActor
 final class ChatViewModel {
     let conversation: Conversation
     private let modelContext: SwiftData.ModelContext
 
-    private(set) var isGenerating = false
-    private(set) var tokensPerSecond: Double = 0
+    private(set) var phase: TurnPhase = .idle
+    /// When the current phase began — the live status line counts from it.
+    private(set) var phaseStartedAt = Date()
+    /// The assistant message being streamed right now, if any.
+    private(set) var streamingMessageID: UUID?
     var errorMessage: String?
     var draft = ""
     private(set) var pendingAttachment: ExtractedAttachment?
@@ -22,6 +35,8 @@ final class ChatViewModel {
         self.conversation = conversation
         self.modelContext = modelContext
     }
+
+    var isGenerating: Bool { phase != .idle }
 
     var messages: [ChatMessage] {
         conversation.messages.sorted { $0.createdAt < $1.createdAt }
@@ -71,20 +86,28 @@ final class ChatViewModel {
         pendingImageData = nil
 
         // History excludes this turn: the user text goes in as the prompt,
-        // and the empty assistant placeholder is filled in place as it streams.
-        let history = messages.map { HistoryTurn(role: $0.role, content: $0.content, imageData: $0.imageData) }
+        // and the empty assistant placeholder is filled in place as it
+        // streams. Placeholders left behind by a failed turn are skipped —
+        // an empty assistant turn is not something to re-feed the model.
+        let history = messages
+            .filter { !($0.role == .assistant && $0.content.isEmpty) }
+            .map { HistoryTurn(role: $0.role, content: $0.content, imageData: $0.imageData) }
 
         let userMessage = ChatMessage(role: .user, content: text, imageData: imageData)
         userMessage.conversation = conversation
         modelContext.insert(userMessage)
         conversation.messages.append(userMessage)
+        nameConversationIfNeeded(from: typed.isEmpty ? defaultText : typed)
 
         let assistantMessage = ChatMessage(role: .assistant, content: "")
         assistantMessage.conversation = conversation
         modelContext.insert(assistantMessage)
         conversation.messages.append(assistantMessage)
+        try? modelContext.save()
 
-        isGenerating = true
+        enter(.preparing)
+        streamingMessageID = assistantMessage.id
+
         let conversationID = conversation.id
         let modelID = conversation.modelID
         let effort = conversation.thinkingEffort
@@ -100,6 +123,8 @@ final class ChatViewModel {
 
         generateTask = Task {
             var splitter = ThinkTagSplitter()
+            let streamStartedAt = Date()
+            var reasoningStartedAt: Date?
             do {
                 let stream = try await InferenceEngine.shared.streamResponse(
                     conversationID: conversationID, modelID: modelID,
@@ -116,14 +141,26 @@ final class ChatViewModel {
                     switch generation {
                     case .chunk(let piece):
                         let delta = splitter.consume(piece)
+                        if delta.contentWasReasoning {
+                            // A bare `</think>` arrived: what already
+                            // streamed into the bubble was the model
+                            // thinking out loud, so move it.
+                            assistantMessage.reasoning =
+                                (assistantMessage.reasoning ?? "") + assistantMessage.content
+                            assistantMessage.content = ""
+                            reasoningStartedAt = reasoningStartedAt ?? streamStartedAt
+                        }
                         if !delta.reasoning.isEmpty {
+                            if reasoningStartedAt == nil { reasoningStartedAt = .now }
+                            if phase != .writing { enter(.thinking) }
                             assistantMessage.reasoning = (assistantMessage.reasoning ?? "") + delta.reasoning
                         }
                         if !delta.content.isEmpty {
+                            closeReasoning(on: assistantMessage, startedAt: reasoningStartedAt)
+                            enter(.writing)
                             assistantMessage.content += delta.content
                         }
                     case .info(let info):
-                        tokensPerSecond = info.tokensPerSecond
                         assistantMessage.tokensPerSecond = info.tokensPerSecond
                     default:
                         // Tool calls are resolved inside ChatSession itself
@@ -133,11 +170,10 @@ final class ChatViewModel {
                 }
             } catch is CancellationError {
                 // User cancelled: keep whatever streamed so far.
-                downloadCoordinator.finishLoad(id: modelID)
             } catch {
                 errorMessage = error.localizedDescription
-                downloadCoordinator.finishLoad(id: modelID)
             }
+            downloadCoordinator.finishLoad(id: modelID)
 
             // Whatever the splitter was still holding back as possible
             // tag-boundary lookahead is now final — release it.
@@ -148,9 +184,18 @@ final class ChatViewModel {
             if !tail.content.isEmpty {
                 assistantMessage.content += tail.content
             }
+            closeReasoning(on: assistantMessage, startedAt: reasoningStartedAt)
 
+            // A turn that produced nothing at all (failed load, immediate
+            // cancel) would otherwise leave an empty bubble behind forever.
+            if assistantMessage.content.isEmpty && (assistantMessage.reasoning ?? "").isEmpty {
+                conversation.messages.removeAll { $0.id == assistantMessage.id }
+                modelContext.delete(assistantMessage)
+            }
+
+            streamingMessageID = nil
+            enter(.idle)
             try? modelContext.save()
-            isGenerating = false
         }
     }
 
@@ -178,6 +223,27 @@ final class ChatViewModel {
     func applyGenerationSettingsChange() {
         try? modelContext.save()
         invalidateSession()
+    }
+
+    private func enter(_ newPhase: TurnPhase) {
+        guard phase != newPhase else { return }
+        phase = newPhase
+        phaseStartedAt = .now
+    }
+
+    private func closeReasoning(on message: ChatMessage, startedAt: Date?) {
+        guard let startedAt, message.reasoningSeconds == nil else { return }
+        message.reasoningSeconds = Date().timeIntervalSince(startedAt)
+    }
+
+    /// The sidebar is useless when every row reads "Nueva conversación",
+    /// so the first thing actually asked becomes the title.
+    private func nameConversationIfNeeded(from text: String) {
+        guard conversation.messages.filter({ $0.role == .user }).count <= 1 else { return }
+        let firstLine = text.split(separator: "\n").first.map(String.init) ?? text
+        let trimmed = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        conversation.title = trimmed.count > 48 ? String(trimmed.prefix(48)) + "…" : trimmed
     }
 
     private func invalidateSession() {

@@ -9,13 +9,18 @@ struct GenerationSettingsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Prompt del sistema") {
+                Section {
                     TextEditor(text: $conversation.systemPrompt)
                         .frame(minHeight: 100)
+                        .font(.body)
                     Button("Usar como predeterminado para conversaciones nuevas") {
                         AppSettings.defaultSystemPrompt = conversation.systemPrompt
                     }
                     .font(.footnote)
+                } header: {
+                    Text("Prompt del sistema")
+                } footer: {
+                    Text("Se aplica desde el siguiente mensaje de esta conversación.")
                 }
 
                 Section {
@@ -45,8 +50,9 @@ struct GenerationSettingsSheet: View {
                 }
             }
             .navigationTitle("Personalización")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Listo") {
                         onDismiss()
                         dismiss()
@@ -72,7 +78,7 @@ private struct LabeledSlider: View {
                     .foregroundStyle(FaroColor.ash)
             }
             Slider(value: $value, in: range)
-                .tint(FaroColor.beamCore)
+                .tint(FaroColor.lamp)
         }
     }
 }

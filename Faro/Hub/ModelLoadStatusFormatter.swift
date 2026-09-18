@@ -10,8 +10,10 @@ enum ModelLoadStatusFormatter {
         }
     }
 
-    /// e.g. "42 % · 2,1/4,9 GB · 12 MB/s · quedan 3 min", or just the
-    /// percentage when the `Progress` carries no byte totals.
+    /// e.g. "42 % · 2,1/4,9 GB · 12 MB/s", or just the percentage when
+    /// the `Progress` carries no byte totals. No estimated time left: the
+    /// transfer rate on a phone swings too much for that number to ever
+    /// have been honest.
     static func line(_ status: ModelLoadStatus) -> String {
         let percent = "\(Int(status.fraction * 100)) %"
         guard status.hasByteInfo, status.phase == .downloading else { return percent }
@@ -23,10 +25,6 @@ enum ModelLoadStatusFormatter {
 
         if status.bytesPerSecond > 0 {
             parts.append(Int64(status.bytesPerSecond).formatted(.byteCount(style: .memory)) + "/s")
-        }
-        if let eta = status.eta, eta.isFinite, eta > 0 {
-            let duration = Duration.seconds(eta)
-            parts.append("quedan " + duration.formatted(.units(width: .narrow, maximumUnitCount: 1)))
         }
         return parts.joined(separator: " · ")
     }
