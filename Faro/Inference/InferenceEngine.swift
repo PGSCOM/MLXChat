@@ -32,8 +32,14 @@ struct HistoryTurn: Sendable {
 actor InferenceEngine {
     static let shared = InferenceEngine()
 
+    /// At most one model is kept resident: weights run to several GB and
+    /// a phone has no room for a second set, so loading a new model drops
+    /// the previous one instead of stacking them until iOS kills the app.
     private var containers: [String: ModelContainer] = [:]
-    private var sessions: [UUID: ChatSession] = [:]
+    /// Sessions carry the model they were built against — a session holds
+    /// its container alive, so evicting a model has to take its sessions
+    /// with it or nothing is actually freed.
+    private var sessions: [UUID: (modelID: String, session: ChatSession)] = [:]
     private var configuredMemoryLimit = false
 
     private init() {}
@@ -68,7 +74,8 @@ actor InferenceEngine {
             configuration: ModelConfiguration(id: modelID),
             progressHandler: progress
         )
-        containers[modelID] = container
+        containers = [modelID: container]
+        sessions = sessions.filter { $0.value.modelID == modelID }
         return container
     }
 
@@ -77,6 +84,7 @@ actor InferenceEngine {
     /// silently serving the now-orphaned in-memory copy.
     func evictContainer(modelID: String) {
         containers[modelID] = nil
+        sessions = sessions.filter { $0.value.modelID != modelID }
     }
 
     private func chatMessages(from history: [HistoryTurn]) -> [Chat.Message] {
@@ -106,8 +114,8 @@ actor InferenceEngine {
         settings: GenerationSettings,
         progress: @Sendable @escaping (Progress) -> Void
     ) async throws -> ChatSession {
-        if let existing = sessions[conversationID] {
-            return existing
+        if let existing = sessions[conversationID], existing.modelID == modelID {
+            return existing.session
         }
         let container = try await loadContainer(modelID: modelID, progress: progress)
         let tools = await MCPConnectionManager.shared.enabledToolSpecs()
@@ -130,7 +138,7 @@ actor InferenceEngine {
             tools: toolSpecs,
             toolDispatch: dispatch
         )
-        sessions[conversationID] = session
+        sessions[conversationID] = (modelID, session)
         return session
     }
 

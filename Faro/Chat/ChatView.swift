@@ -11,7 +11,7 @@ struct ChatView: View {
         ZStack {
             FaroColor.ink.ignoresSafeArea()
 
-            if viewModel.messages.isEmpty {
+            if viewModel.conversation.messages.isEmpty {
                 emptyState
             } else {
                 transcript
@@ -24,55 +24,40 @@ struct ChatView: View {
                         ModelLoadBand(modelName: shortModelName, status: status)
                     }
                     if let error = viewModel.errorMessage {
-                        Text(error)
-                            .font(.footnote)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(FaroColor.error.opacity(0.4), in: .rect(cornerRadius: 12))
+                        ErrorBand(message: error) { viewModel.errorMessage = nil }
                     }
                     ComposerView(viewModel: viewModel)
                 }
                 .padding(.horizontal, 16)
+                .padding(.top, 28)
                 .padding(.bottom, 12)
+                // The transcript scrolls underneath, so the composer sits
+                // on a fade into the page rather than a hard band edge.
+                .background(
+                    LinearGradient(
+                        stops: [
+                            .init(color: FaroColor.ink.opacity(0), location: 0),
+                            .init(color: FaroColor.ink, location: 0.5),
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
             }
         }
         .navigationTitle(viewModel.conversation.title)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem {
                 Button {
                     showVoice = true
                 } label: {
-                    Image(systemName: "mic")
+                    Image(systemName: "waveform")
                 }
+                .tint(FaroColor.ash)
+                .accessibilityLabel("Modo voz")
             }
             ToolbarItem {
-                Button {
-                    showSettings = true
-                } label: {
-                    Image(systemName: "slider.horizontal.3")
-                }
-            }
-            ToolbarItem {
-                Menu {
-                    ForEach(ThinkingEffort.allCases, id: \.self) { effort in
-                        Button(effort.label) { viewModel.setThinkingEffort(effort) }
-                    }
-                } label: {
-                    Text(viewModel.conversation.thinkingEffort.label)
-                        .font(.footnote)
-                        .foregroundStyle(FaroColor.ash)
-                }
-            }
-            ToolbarItem {
-                Button {
-                    showModelBrowser = true
-                } label: {
-                    Text(shortModelName)
-                        .font(.footnote)
-                        .foregroundStyle(FaroColor.ash)
-                }
+                turnMenu
             }
         }
         .sheet(isPresented: $showModelBrowser) {
@@ -92,19 +77,59 @@ struct ChatView: View {
         }
     }
 
+    /// Model, reasoning depth and generation settings all answer the same
+    /// question — how this conversation replies — so they live in one
+    /// control instead of four competing toolbar buttons.
+    private var turnMenu: some View {
+        Menu {
+            Button {
+                showModelBrowser = true
+            } label: {
+                Label("Cambiar modelo", systemImage: "shippingbox")
+            }
+            Picker("Razonamiento", selection: thinkingEffortBinding) {
+                ForEach(ThinkingEffort.allCases, id: \.self) { effort in
+                    Text(effort.label).tag(effort)
+                }
+            }
+            Button {
+                showSettings = true
+            } label: {
+                Label("Generación", systemImage: "slider.horizontal.3")
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text(shortModelName)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .font(.footnote)
+            .foregroundStyle(FaroColor.ash)
+        }
+    }
+
+    private var thinkingEffortBinding: Binding<ThinkingEffort> {
+        Binding(
+            get: { viewModel.conversation.thinkingEffort },
+            set: { viewModel.setThinkingEffort($0) }
+        )
+    }
+
     private var shortModelName: String {
         viewModel.conversation.modelID.split(separator: "/").last.map(String.init)
             ?? viewModel.conversation.modelID
     }
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            BeamView(intensity: viewModel.isGenerating ? 1 : 0.25)
+        VStack(spacing: 18) {
+            BeamView(intensity: viewModel.isGenerating ? 1 : 0.2)
                 .frame(width: 240, height: 240)
-            Text("Empieza una conversación")
-                .font(.system(size: 17, weight: .medium))
+            Text("Todo ocurre en este dispositivo")
+                .font(.system(size: 16))
                 .foregroundStyle(FaroColor.ash)
         }
+        .padding(.bottom, 80)
     }
 
     private struct ModelLoadBand: View {
@@ -112,31 +137,67 @@ struct ChatView: View {
         let status: ModelLoadStatus
 
         var body: some View {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("\(ModelLoadStatusFormatter.phaseLabel(status)) \(modelName)")
                         .font(.footnote)
-                        .foregroundStyle(.white)
-                    Spacer()
+                        .foregroundStyle(FaroColor.bone)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
                     Text(ModelLoadStatusFormatter.line(status))
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundStyle(FaroColor.ash)
                 }
                 ProgressView(value: status.fraction)
-                    .tint(FaroColor.beamCore)
+                    .tint(FaroColor.lamp)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(FaroColor.inkRaised, in: .rect(cornerRadius: 12))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(FaroColor.inkRaised, in: .rect(cornerRadius: 14))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(FaroColor.edge, lineWidth: 1)
+            }
+        }
+    }
+
+    private struct ErrorBand: View {
+        let message: String
+        let onDismiss: () -> Void
+
+        var body: some View {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(FaroColor.error)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(FaroColor.ash)
+                }
+                .accessibilityLabel("Descartar el error")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(FaroColor.inkRaised, in: .rect(cornerRadius: 14))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(FaroColor.error.opacity(0.35), lineWidth: 1)
+            }
         }
     }
 
     private var transcript: some View {
-        ScrollViewReader { proxy in
+        // Sorted once per redraw: `viewModel.messages` re-reads and
+        // re-sorts the relationship on every access, and this view redraws
+        // on every token.
+        let messages = viewModel.messages
+        return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    ForEach(viewModel.messages) { message in
-                        MessageView(message: message)
+                LazyVStack(alignment: .leading, spacing: 20) {
+                    ForEach(messages) { message in
+                        MessageView(message: message, liveTurn: liveTurn(for: message))
                             .id(message.id)
                     }
                     Color.clear.frame(height: 90).id("bottom")
@@ -144,14 +205,21 @@ struct ChatView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 16)
             }
-            .onChange(of: viewModel.messages.last?.content) {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo("bottom", anchor: .bottom)
-                }
-            }
-            .onChange(of: viewModel.messages.count) {
-                proxy.scrollTo("bottom", anchor: .bottom)
-            }
+            .scrollDismissesKeyboard(.interactively)
+            .onChange(of: messages.last?.content) { scrollToBottom(proxy) }
+            .onChange(of: messages.last?.reasoning) { scrollToBottom(proxy) }
+            .onChange(of: messages.count) { proxy.scrollTo("bottom", anchor: .bottom) }
         }
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            proxy.scrollTo("bottom", anchor: .bottom)
+        }
+    }
+
+    private func liveTurn(for message: ChatMessage) -> MessageView.LiveTurn? {
+        guard viewModel.streamingMessageID == message.id else { return nil }
+        return MessageView.LiveTurn(phase: viewModel.phase, startedAt: viewModel.phaseStartedAt)
     }
 }

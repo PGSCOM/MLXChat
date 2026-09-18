@@ -10,6 +10,10 @@ import MLXLMCommon
 /// network can use this device's model. Shares `InferenceEngine` with
 /// the in-app chat, so the two never load the same model twice.
 ///
+/// Reasoning is stripped before it leaves the device: an OpenAI client
+/// expects `content` to be the answer, not a `<think>` block glued to the
+/// front of it.
+///
 /// ponytail: text-only for now — `image_url` content parts are parsed
 /// but ignored (see `ChatContent`). VLM-over-HTTP is real work (decoding
 /// data-URIs into `UserInput.Image`); add it if a client actually needs it.
@@ -92,7 +96,11 @@ final class APIServer {
                 return HTTPResponse(statusCode: .unauthorized, headers: [.contentType: "application/json"], body: errorBody("Falta el token o es incorrecto."))
             }
             log("GET /v1/models")
-            let entries = CuratedModel.all.map { ModelListResponse.Entry(id: $0.id) }
+            // What this device can actually answer with: everything in the
+            // cache, plus the curated ids it would fetch on first use.
+            let ids = Set(ModelCacheStore.downloadedIDs())
+                .union(CuratedModel.all.map(\.id))
+            let entries = ids.sorted().map { ModelListResponse.Entry(id: $0) }
             let data = (try? JSONEncoder().encode(ModelListResponse(data: entries))) ?? Data()
             return HTTPResponse(statusCode: .ok, headers: [.contentType: "application/json"], body: data)
         }
@@ -158,10 +166,15 @@ final class APIServer {
             if payload.stream == true {
                 return streamingResponse(stream: stream, completionID: completionID, created: created, modelID: modelID, requestID: requestID)
             } else {
+                var splitter = ThinkTagSplitter()
                 var full = ""
                 for try await generation in stream {
-                    if case .chunk(let piece) = generation { full += piece }
+                    guard case .chunk(let piece) = generation else { continue }
+                    let delta = splitter.consume(piece)
+                    if delta.contentWasReasoning { full = "" }
+                    full += delta.content
                 }
+                full += splitter.finish().content
                 await InferenceEngine.shared.invalidateSession(conversationID: requestID)
                 let response = ChatCompletionResponse(
                     id: completionID, created: created, model: modelID,
@@ -190,17 +203,31 @@ final class APIServer {
                 continuation.finish()
                 Task { await InferenceEngine.shared.invalidateSession(conversationID: requestID) }
             }
+            var splitter = ThinkTagSplitter()
+
+            func send(_ text: String) {
+                guard !text.isEmpty else { return }
+                let chunk = ChatCompletionChunk(
+                    id: completionID, created: created, model: modelID,
+                    choices: [.init(index: 0, delta: .init(content: text), finish_reason: nil)]
+                )
+                if let data = try? JSONEncoder().encode(chunk) {
+                    continuation.yield(Data("data: ".utf8) + data + Data("\n\n".utf8))
+                }
+            }
+
             do {
                 for try await generation in stream {
                     guard case .chunk(let piece) = generation else { continue }
-                    let chunk = ChatCompletionChunk(
-                        id: completionID, created: created, model: modelID,
-                        choices: [.init(index: 0, delta: .init(content: piece), finish_reason: nil)]
-                    )
-                    if let data = try? JSONEncoder().encode(chunk) {
-                        continuation.yield(Data("data: ".utf8) + data + Data("\n\n".utf8))
-                    }
+                    // ponytail: a chat template that opens `<think>` inside
+                    // the prompt only reveals itself at the closing tag, by
+                    // which point these bytes are already on the wire. The
+                    // buffered path above corrects itself; this one can't
+                    // un-send. Buffer the whole answer here too if a client
+                    // ever complains about a leading reasoning block.
+                    send(splitter.consume(piece).content)
                 }
+                send(splitter.finish().content)
                 let done = ChatCompletionChunk(
                     id: completionID, created: created, model: modelID,
                     choices: [.init(index: 0, delta: .init(), finish_reason: "stop")]

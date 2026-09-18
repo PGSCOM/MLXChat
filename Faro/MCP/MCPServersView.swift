@@ -26,7 +26,7 @@ struct MCPServersView: View {
                                 set: { toggle(server, to: $0) }
                             )
                         )
-                        .tint(FaroColor.beamCore)
+                        .tint(FaroColor.lamp)
 
                         Text(server.url)
                             .font(.footnote)

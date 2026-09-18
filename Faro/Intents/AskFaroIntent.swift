@@ -46,7 +46,10 @@ struct AskFaroIntent: AppIntent {
             )
             for try await generation in stream {
                 // Siri would otherwise read the model's reasoning out loud.
-                if case .chunk(let piece) = generation { answer += splitter.consume(piece).content }
+                guard case .chunk(let piece) = generation else { continue }
+                let delta = splitter.consume(piece)
+                if delta.contentWasReasoning { answer = "" }
+                answer += delta.content
             }
             answer += splitter.finish().content
         } catch {

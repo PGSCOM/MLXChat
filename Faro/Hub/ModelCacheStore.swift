@@ -18,23 +18,27 @@ enum ModelCacheStore {
 
     /// Every model repo currently cached on disk, discovered by scanning
     /// the cache root — not limited to the curated list or search results.
+    /// Adds up every blob to report a size, so callers that only need the
+    /// ids should use `downloadedIDs()` instead.
     static func downloadedModels() -> [DownloadedModel] {
-        let cache = HubCache.default
-        guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: cache.cacheDirectory, includingPropertiesForKeys: nil
-        ) else { return [] }
-
-        return entries.compactMap { url -> DownloadedModel? in
-            guard let id = repoID(fromDirectoryName: url.lastPathComponent) else { return nil }
-            return DownloadedModel(id: id, sizeBytes: directorySize(url))
-        }.sorted { $0.id < $1.id }
+        cachedRepoDirectories()
+            .map { DownloadedModel(id: $0.id, sizeBytes: directorySize($0.url)) }
+            .sorted { $0.id < $1.id }
     }
 
-    static func isDownloaded(_ modelID: String) -> Bool {
-        guard let id = Repo.ID(rawValue: modelID) else { return false }
-        return FileManager.default.fileExists(
-            atPath: HubCache.default.repoDirectory(repo: id, kind: .model).path
-        )
+    /// The same listing without walking the contents of each repo.
+    static func downloadedIDs() -> [String] {
+        cachedRepoDirectories().map { $0.id }.sorted()
+    }
+
+    private static func cachedRepoDirectories() -> [(id: String, url: URL)] {
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: HubCache.default.cacheDirectory, includingPropertiesForKeys: nil
+        ) else { return [] }
+
+        return entries.compactMap { url in
+            repoID(fromDirectoryName: url.lastPathComponent).map { (id: $0, url: url) }
+        }
     }
 
     static func delete(_ modelID: String) throws {

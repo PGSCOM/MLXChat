@@ -19,10 +19,12 @@ struct VoiceView: View {
                         Image(systemName: "xmark")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(FaroColor.ash)
+                            .frame(width: 44, height: 44)
                     }
+                    .accessibilityLabel("Salir del modo voz")
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
 
                 Spacer()
 
@@ -32,15 +34,16 @@ struct VoiceView: View {
 
                 Text(displayText)
                     .font(.system(size: 17))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(voice.state == .listening && voice.transcript.isEmpty ? FaroColor.ash : FaroColor.bone)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
-                    .frame(minHeight: 60)
+                    .frame(minHeight: 72, alignment: .top)
 
                 if let error = voice.errorMessage {
                     Text(error)
                         .font(.footnote)
                         .foregroundStyle(FaroColor.error)
+                        .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
                 }
 
@@ -51,10 +54,11 @@ struct VoiceView: View {
                         .font(.system(size: 26, weight: .semibold))
                         .foregroundStyle(FaroColor.ink)
                         .frame(width: 76, height: 76)
-                        .background(FaroColor.beamCore, in: .circle)
+                        .background(FaroColor.bone, in: .circle)
                 }
-                .disabled(voice.state == .thinking || voice.state == .speaking)
-                .opacity(voice.state == .thinking || voice.state == .speaking ? 0.4 : 1)
+                .disabled(!canTalk)
+                .opacity(canTalk ? 1 : 0.35)
+                .accessibilityLabel(voice.state == .listening ? "Terminar de hablar" : "Hablar")
                 .padding(.bottom, 40)
             }
         }
@@ -66,8 +70,17 @@ struct VoiceView: View {
         }
         .onChange(of: viewModel.isGenerating) { _, isGenerating in
             guard !isGenerating, voice.state == .thinking else { return }
-            voice.speak(viewModel.messages.last?.content ?? "")
+            voice.speak(lastAnswer)
         }
+        .onDisappear { voice.cancel() }
+    }
+
+    private var canTalk: Bool { voice.state == .idle || voice.state == .listening }
+
+    /// The assistant's own last turn — never `messages.last`, which is the
+    /// user's question whenever a turn produced nothing.
+    private var lastAnswer: String {
+        viewModel.messages.last { $0.role == .assistant }?.content ?? ""
     }
 
     private var beamIntensity: Double {
@@ -83,8 +96,10 @@ struct VoiceView: View {
         switch voice.state {
         case .idle: "Toca para hablar"
         case .listening: voice.transcript.isEmpty ? "Escuchando…" : voice.transcript
-        case .thinking: "Pensando…"
-        case .speaking: viewModel.messages.last?.content ?? ""
+        // The answer streams in while it's still being written, so the
+        // wait shows progress instead of a blank screen.
+        case .thinking: lastAnswer.isEmpty ? "Pensando…" : lastAnswer
+        case .speaking: lastAnswer
         }
     }
 
@@ -100,6 +115,10 @@ struct VoiceView: View {
             }
             viewModel.draft = text
             viewModel.send()
+            // `send()` refuses while a turn is already running; without
+            // this the session would sit in `.thinking` forever waiting
+            // for a generation that never started.
+            if !viewModel.isGenerating { voice.cancel() }
         case .thinking, .speaking:
             break
         }

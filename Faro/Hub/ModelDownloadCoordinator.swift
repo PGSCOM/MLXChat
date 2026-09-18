@@ -11,7 +11,6 @@ struct ModelLoadStatus {
     var completedBytes: Int64
     var totalBytes: Int64
     var bytesPerSecond: Double
-    var eta: TimeInterval?
 
     var hasByteInfo: Bool { totalBytes > 0 }
 }
@@ -26,14 +25,19 @@ final class ModelDownloadCoordinator {
 
     private(set) var status: [String: ModelLoadStatus] = [:]
     private(set) var errors: [String: String] = [:]
+    /// Preflight said the weights probably don't fit this device's
+    /// recommended working set. Not fatal — the recommendation is
+    /// conservative — so it's shown and the download continues.
+    private(set) var warnings: [String: String] = [:]
 
-    /// Last raw sample per model, to derive a smoothed speed/ETA — a lone
-    /// `fractionCompleted` reading says nothing about rate.
+    /// Last raw sample per model, to derive a smoothed transfer rate — a
+    /// lone `fractionCompleted` reading says nothing about speed.
     private var lastSample: [String: (date: Date, bytes: Int64)] = [:]
 
     func download(id: String) {
         guard status[id] == nil else { return }
         errors[id] = nil
+        warnings[id] = nil
         beginLoad(id: id)
 
         Task {
@@ -44,6 +48,7 @@ final class ModelDownloadCoordinator {
                     status[id] = nil
                     return
                 }
+                if !preflight.fitsRecommendedMemory { warnings[id] = preflight.summary }
                 _ = try await InferenceEngine.shared.loadContainer(modelID: id) { [weak self] value in
                     Task { @MainActor in self?.record(id: id, value: value) }
                 }
@@ -64,7 +69,7 @@ final class ModelDownloadCoordinator {
         if status[id] == nil {
             status[id] = ModelLoadStatus(
                 phase: .loadingIntoMemory, fraction: 0,
-                completedBytes: 0, totalBytes: 0, bytesPerSecond: 0, eta: nil
+                completedBytes: 0, totalBytes: 0, bytesPerSecond: 0
             )
         }
     }
@@ -94,17 +99,12 @@ final class ModelDownloadCoordinator {
             lastSample[id] = (now, completed)
         }
 
-        let eta: TimeInterval? = (total > 0 && bytesPerSecond > 0)
-            ? Double(total - completed) / bytesPerSecond
-            : nil
-
         status[id] = ModelLoadStatus(
             phase: total > 0 ? .downloading : .loadingIntoMemory,
             fraction: value.fractionCompleted,
             completedBytes: completed,
             totalBytes: total,
-            bytesPerSecond: bytesPerSecond,
-            eta: eta
+            bytesPerSecond: bytesPerSecond
         )
     }
 }

@@ -23,6 +23,7 @@ struct ComposerView: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                     }
+                    .accessibilityLabel("Quitar el archivo")
                 }
                 .font(.caption)
                 .foregroundStyle(FaroColor.ash)
@@ -40,6 +41,7 @@ struct ComposerView: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                     }
+                    .accessibilityLabel("Quitar la imagen")
                 }
                 .font(.caption)
                 .foregroundStyle(FaroColor.ash)
@@ -53,36 +55,47 @@ struct ComposerView: View {
                         .foregroundStyle(FaroColor.ash)
                         .frame(width: 34, height: 34)
                 }
+                .accessibilityLabel("Adjuntar un archivo")
 
                 PhotosPicker(selection: $pickerItem, matching: .images) {
                     Image(systemName: "photo")
                         .foregroundStyle(FaroColor.ash)
                         .frame(width: 34, height: 34)
                 }
+                .accessibilityLabel("Adjuntar una imagen")
 
                 TextField("Pregunta lo que quieras", text: $viewModel.draft, axis: .vertical)
                     .textFieldStyle(.plain)
+                    .foregroundStyle(FaroColor.bone)
+                    .tint(FaroColor.lamp)
                     .lineLimit(1...6)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background(FaroColor.inkRaised, in: .rect(cornerRadius: 18))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 18)
+                            .strokeBorder(focused ? FaroColor.lamp.opacity(0.5) : FaroColor.edge, lineWidth: 1)
+                    }
                     .focused($focused)
-                    .onSubmit(send)
 
                 Button {
                     if viewModel.isGenerating { viewModel.cancel() } else { send() }
                 } label: {
                     Image(systemName: viewModel.isGenerating ? "stop.fill" : "arrow.up")
                         .font(.system(size: 15, weight: .semibold))
-                        // Dark icon only reads against the bright fill;
+                        // Dark glyph only reads against the bright fill;
                         // on the dim inactive fill it drops to ~1.8:1
                         // contrast (should stay above 4.5:1), so the
-                        // icon color follows the background's lightness.
+                        // glyph color follows the background's lightness.
                         .foregroundStyle(canSend ? FaroColor.ink : FaroColor.ash)
                         .frame(width: 34, height: 34)
-                        .background(canSend ? FaroColor.beamCore : FaroColor.ash.opacity(0.3), in: .circle)
+                        .background(canSend ? FaroColor.bone : FaroColor.inkRaised, in: .circle)
+                        // The inactive fill is nearly the page colour, so
+                        // it keeps an edge to stay visibly a button.
+                        .overlay { Circle().strokeBorder(canSend ? .clear : FaroColor.edge, lineWidth: 1) }
                 }
-                .disabled(!viewModel.isGenerating && !canSend)
+                .disabled(!canSend)
+                .accessibilityLabel(viewModel.isGenerating ? "Detener la respuesta" : "Enviar")
             }
         }
         // A hairline highlight while something hovers, so the drop target
@@ -90,7 +103,7 @@ struct ComposerView: View {
         .overlay {
             if isDropTargeted {
                 RoundedRectangle(cornerRadius: 18)
-                    .strokeBorder(FaroColor.beamCore, lineWidth: 1.5)
+                    .strokeBorder(FaroColor.lamp, lineWidth: 1.5)
             }
         }
         .fileImporter(
@@ -110,6 +123,8 @@ struct ComposerView: View {
         .onDrop(of: [.image] + Self.fileTypes, isTargeted: $isDropTargeted, perform: handleDrop)
     }
 
+    /// Also true while generating: the same button becomes "stop", and it
+    /// has to stay live for that.
     private var canSend: Bool {
         viewModel.isGenerating
             || viewModel.pendingAttachment != nil

@@ -15,6 +15,9 @@ final class ChatMessage {
     /// Text captured from a `<think>...</think>` block, shown collapsed
     /// under the visible answer. Nil when the model didn't reason aloud.
     var reasoning: String?
+    /// How long the model spent inside its `<think>` block, so the
+    /// collapsed disclosure can say so instead of hiding the wait.
+    var reasoningSeconds: Double?
     var createdAt: Date
     var tokensPerSecond: Double?
     /// An image attached to a user message (drag-and-drop or the photo

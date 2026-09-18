@@ -1,19 +1,21 @@
 import SwiftUI
 
-/// Design tokens for Faro. Colors only ever combine inside the beam artifact
-/// (see `BeamView`); everywhere else the UI stays monochrome on `ink` with
-/// `beamCore` as the single tonal accent.
+/// Design tokens for Faro. The whole app is one warm, near-black surface
+/// lit by a single source — the lamp. `lamp`/`lampCore` belong to the
+/// light (the beam, live state, the primary action); everything else is
+/// tone: `bone` for what must be read, `ash` for what supports it.
 enum FaroColor {
-    static let ink = Color(hex: 0x0B0D1A)
-    static let inkRaised = Color(hex: 0x12152B)
-    static let beamCore = Color(hex: 0x7FE6FF)
-    static let beamMid = Color(hex: 0x3B6FF0)
-    static let beamFar = Color(hex: 0x6B3BD8)
-    static let ash = Color(hex: 0xA8AEC8)
-    /// Errors, exclusively. Never the beam's violet — that color belongs
-    /// only inside `BeamView`, and violet doesn't read as "wrong" anyway.
-    /// A tonal terracotta, muted rather than a poster-bright red.
-    static let error = Color(hex: 0xE0654F)
+    static let ink = Color(hex: 0x100F0D)
+    static let inkRaised = Color(hex: 0x1A1815)
+    /// Self-coloured hairline: a lip catching the lamp, not a drawn outline.
+    static let edge = Color(hex: 0x2B2620)
+    static let lamp = Color(hex: 0xF5C15A)
+    static let lampCore = Color(hex: 0xFFF1D6)
+    static let bone = Color(hex: 0xEFE7DA)
+    static let ash = Color(hex: 0x9C9488)
+    /// Errors, exclusively. Muted brick rather than a poster-bright red,
+    /// far enough from the lamp's amber to never read as "lit".
+    static let error = Color(hex: 0xD4675A)
 }
 
 extension Color {
