@@ -45,7 +45,7 @@ final class AppleFoundationEngine {
         try Self.checkAvailability()
         // Built here, not inside the stream, so an unusable model reports
         // itself to the caller instead of failing silently mid-turn.
-        _ = session(for: conversationID, systemPrompt: systemPrompt, history: history)
+        _ = session(conversationID: conversationID, systemPrompt: systemPrompt, history: history)
 
         return AsyncThrowingStream { continuation in
             Task { @MainActor in
