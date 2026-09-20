@@ -39,6 +39,13 @@ jobs:
             -clonedSourcePackagesDirPath "$PWD/SourcePackages" \
             -skipPackagePluginValidation
 
+      - name: Cache DerivedData
+        uses: actions/cache@v6
+        with:
+          path: DerivedData
+          key: ${{ runner.os }}-derived-data-${{ hashFiles('**/*.swift', 'project.yml') }}
+          restore-keys: ${{ runner.os }}-derived-data-
+          
       - name: Build (unsigned)
         run: |
           set -o pipefail
