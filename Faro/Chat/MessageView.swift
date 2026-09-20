@@ -49,11 +49,14 @@ struct MessageView: View {
     }
 
     /// One card for both states, so the block doesn't change shape the
-    /// moment the stream ends — only its title and its body do.
+    /// moment the stream ends — only its title and its body do. It stands
+    /// in for the status line for the whole thinking phase, so it arrives
+    /// with the phase rather than with the first reasoning token: nothing
+    /// pops in halfway through the turn.
     @ViewBuilder private var reasoning: some View {
-        if let text = reasoningText {
+        if isThinking || reasoningText != nil {
             ReasoningCard(
-                text: text,
+                text: reasoningText ?? "",
                 isLive: isThinking,
                 seconds: message.reasoningSeconds,
                 startedAt: isThinking ? liveTurn?.startedAt : nil
@@ -66,7 +69,7 @@ struct MessageView: View {
     private func showsStatusLine(_ turn: LiveTurn) -> Bool {
         // While thinking, the reasoning card already carries the label and
         // the counter; two live timers on one bubble is just noise.
-        if isThinking, reasoningText != nil { return false }
+        if isThinking { return false }
         return message.content.isEmpty || turn.phase != .writing
     }
 }
@@ -100,7 +103,9 @@ private struct TurnStatusLine: View {
 }
 
 /// The reasoning block, live and finished. Same card, same header row in
-/// both states: when the stream ends the body folds away and the title
+/// both states, and closed in both by default: while the model thinks the
+/// row says so and the lamp passes over the word, and the reasoning itself
+/// only appears if the person opens it. When the stream ends the title
 /// swaps for how long it took, and nothing else moves.
 struct ReasoningCard: View {
     let text: String
@@ -111,16 +116,10 @@ struct ReasoningCard: View {
 
     @State private var expanded = false
 
-    /// Capped by characters, never by a line limit: a line limit truncates
-    /// the end, which is exactly the part being written.
-    private static let liveCharacters = 180
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
-            if isLive {
-                textBlock(tail)
-            } else if expanded {
+            if expanded, isOpenable {
                 textBlock(text)
             }
         }
@@ -130,12 +129,12 @@ struct ReasoningCard: View {
         .faroCard()
     }
 
-    /// Live, there is nothing to collapse to yet — the duration doesn't
-    /// exist until the block closes — so the row isn't a control.
+    /// Until the first reasoning token lands there is nothing behind the
+    /// header, so the row isn't a control yet.
+    private var isOpenable: Bool { !text.isEmpty }
+
     @ViewBuilder private var header: some View {
-        if isLive {
-            headerRow
-        } else {
+        if isOpenable {
             Button {
                 withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
             } label: {
@@ -143,14 +142,20 @@ struct ReasoningCard: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(expanded ? "Ocultar el razonamiento" : "Mostrar el razonamiento")
+        } else {
+            headerRow
         }
     }
 
     private var headerRow: some View {
         HStack(spacing: 8) {
-            Text(title)
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(FaroColor.bone)
+            if isLive {
+                SweptLabel(text: title)
+            } else {
+                Text(title)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(FaroColor.bone)
+            }
             if let startedAt {
                 TimelineView(.periodic(from: startedAt, by: 1)) { timeline in
                     Text(Self.elapsedLabel(since: startedAt, at: timeline.date))
@@ -160,7 +165,7 @@ struct ReasoningCard: View {
                 }
             }
             Spacer(minLength: 8)
-            if !isLive {
+            if isOpenable {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(FaroColor.ash)
@@ -182,11 +187,6 @@ struct ReasoningCard: View {
         isLive ? "Pensando…" : Self.durationLabel(seconds)
     }
 
-    private var tail: String {
-        guard text.count > Self.liveCharacters else { return text }
-        return "…" + String(text.suffix(Self.liveCharacters))
-    }
-
     static func durationLabel(_ seconds: Double?) -> String {
         guard let seconds, seconds >= 1 else { return "Pensamientos" }
         let whole = Int(seconds)
@@ -198,6 +198,52 @@ struct ReasoningCard: View {
     static func elapsedLabel(since start: Date, at date: Date) -> String {
         let seconds = max(0, Int(date.timeIntervalSince(start)))
         return seconds < 60 ? "\(seconds) s" : "\(seconds / 60) min \(seconds % 60) s"
+    }
+}
+
+/// The word the model is busy with, lit by the same lamp as the beam: a
+/// warm pass travelling across the glyphs while the turn is live. Driven
+/// off the timeline's clock rather than a repeating animation, so a redraw
+/// on every token can't leave it stranded mid-sweep — and the label is
+/// drawn at full strength underneath, so it stays readable if the timeline
+/// never ticks at all or motion is reduced.
+private struct SweptLabel: View {
+    let text: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// One pass, plus a beat of darkness before the next one comes round.
+    private static let period: Double = 2.6
+
+    var body: some View {
+        label
+            .foregroundStyle(FaroColor.ash)
+            .overlay { if !reduceMotion { light } }
+    }
+
+    private var label: some View {
+        Text(text).font(.footnote.weight(.medium))
+    }
+
+    private var light: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+                .truncatingRemainder(dividingBy: Self.period) / Self.period
+            GeometryReader { geo in
+                LinearGradient(
+                    stops: [
+                        .init(color: FaroColor.lampCore.opacity(0), location: 0),
+                        .init(color: FaroColor.lampCore, location: 0.5),
+                        .init(color: FaroColor.lampCore.opacity(0), location: 1),
+                    ],
+                    startPoint: .leading, endPoint: .trailing
+                )
+                .frame(width: geo.size.width * 0.7)
+                // Starts fully off the left edge, leaves fully past the right.
+                .offset(x: (t * 1.7 - 0.7) * geo.size.width)
+            }
+            .mask(label)
+        }
+        .allowsHitTesting(false)
     }
 }
 
