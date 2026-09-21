@@ -99,9 +99,9 @@ actor InferenceEngine {
     /// `<think>`. Templates that pre-close it (`<think>\n\n</think>`, the
     /// thinking-disabled path) correctly answer no.
     private static func promptOpensThink(_ container: ModelContainer) async -> Bool {
-        let messages: [Message] = [["role": "user", "content": "hola"]]
+        let messages: [MLXLMCommon.Message] = [["role": "user", "content": "hola"]]
         let prompt = try? await container.perform { (context: ModelContext) in
-            context.tokenizer.decode(tokens: try context.tokenizer.applyChatTemplate(messages: messages))
+            context.tokenizer.decode(tokenIds: try context.tokenizer.applyChatTemplate(messages: messages))
         }
         return prompt.map(Self.endsInsideThink) ?? false
     }
