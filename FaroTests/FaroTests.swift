@@ -102,6 +102,27 @@ struct ThinkTagSplitterTests {
     }
 }
 
+/// The `<think>` the chat template leaves open in the prompt itself —
+/// what `InferenceEngine` inspects to decide whether to replay an opening
+/// tag into the stream.
+struct PromptOpensThinkTests {
+    @Test func detectsATemplateThatLeavesTheBlockOpen() {
+        #expect(InferenceEngine.endsInsideThink("<|im_start|>assistant\n<think>\n"))
+    }
+
+    @Test func rejectsATemplateThatPreClosesTheBlock() {
+        #expect(!InferenceEngine.endsInsideThink("<|im_start|>assistant\n<think>\n\n</think>\n\n"))
+    }
+
+    @Test func rejectsATemplateWithNoThinkTagAtAll() {
+        #expect(!InferenceEngine.endsInsideThink("<|im_start|>assistant\n"))
+    }
+
+    @Test func ignoresClosedBlocksQuotedEarlierInTheHistory() {
+        #expect(InferenceEngine.endsInsideThink("<think>previo</think>respuesta<|im_start|>assistant\n<think>"))
+    }
+}
+
 struct ModelLoadStatusFormatterTests {
     @Test func reportsProgressWithoutAnEstimatedTimeLeft() {
         let status = ModelLoadStatus(
