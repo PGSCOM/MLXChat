@@ -4,6 +4,7 @@ import SwiftData
 struct RootView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Conversation.createdAt, order: .reverse) private var conversations: [Conversation]
+    @Query private var mcpServers: [MCPServerConfig]
     @State private var selectedID: UUID?
 
     var body: some View {
@@ -26,6 +27,23 @@ struct RootView: View {
         .task {
             if selectedID == nil { selectedID = conversations.first?.id }
         }
+        // `MCPServerConfig.isEnabled` survives an app relaunch (SwiftData),
+        // but `MCPConnectionManager`'s live clients don't — they're actor
+        // state that resets to empty every launch. Without this, a server
+        // still shows "on" in Settings while the model silently gets no
+        // tools at all until the user happens to revisit that screen.
+        .task { await reconnectEnabledMCPServers() }
+    }
+
+    private func reconnectEnabledMCPServers() async {
+        for server in mcpServers where server.isEnabled {
+            do {
+                _ = try await MCPConnectionManager.shared.connect(server.snapshot)
+            } catch {
+                server.isEnabled = false
+            }
+        }
+        try? modelContext.save()
     }
 
     private var emptyDetail: some View {
