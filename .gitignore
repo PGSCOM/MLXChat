@@ -8,3 +8,4 @@
 *.ipa
 .swiftpm/
 xcuserdata/
+graphify-out/

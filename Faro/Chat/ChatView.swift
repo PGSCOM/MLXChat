@@ -5,6 +5,9 @@ struct ChatView: View {
     @State private var showModelBrowser = false
     @State private var showSettings = false
     @State private var showVoice = false
+    /// Models that can be switched to without a download. Read once off
+    /// the main actor — `body` re-runs on every token and this touches disk.
+    @State private var quickModelIDs: [String] = []
     private let downloadCoordinator = ModelDownloadCoordinator.shared
 
     var body: some View {
@@ -60,6 +63,9 @@ struct ChatView: View {
                 turnMenu
             }
         }
+        // Also re-reads when the browser closes, so a model downloaded
+        // just now shows up in the quick list.
+        .task(id: showModelBrowser) { await refreshQuickModels() }
         .sheet(isPresented: $showModelBrowser) {
             ModelBrowserView(
                 currentModelID: viewModel.conversation.modelID,
@@ -82,10 +88,17 @@ struct ChatView: View {
     /// control instead of four competing toolbar buttons.
     private var turnMenu: some View {
         Menu {
+            // A Picker inside a Menu renders as a checked list, so the
+            // active model is marked without drawing the checkmark here.
+            Picker("Modelo", selection: modelBinding) {
+                ForEach(quickModelIDs, id: \.self) { id in
+                    Text(Self.shortName(id)).tag(id)
+                }
+            }
             Button {
                 showModelBrowser = true
             } label: {
-                Label("Cambiar modelo", systemImage: "shippingbox")
+                Label("Descargar otro modelo", systemImage: "shippingbox")
             }
             Picker("Razonamiento", selection: thinkingEffortBinding) {
                 ForEach(ThinkingEffort.allCases, id: \.self) { effort in
@@ -109,6 +122,26 @@ struct ChatView: View {
         }
     }
 
+    private var modelBinding: Binding<String> {
+        Binding(
+            get: { viewModel.conversation.modelID },
+            set: { viewModel.changeModel(to: $0) }
+        )
+    }
+
+    /// The list has to contain the current model or the Picker has nothing
+    /// to check — a model still downloading isn't on disk yet.
+    private func refreshQuickModels() async {
+        let downloaded = await Task.detached(priority: .utility) {
+            ModelCacheStore.downloadedIDs()
+        }.value
+        var ids = downloaded
+        if AppleFoundationEngine.isAvailable { ids.insert(AppleFoundationModel.id, at: 0) }
+        let current = viewModel.conversation.modelID
+        if !ids.contains(current) { ids.append(current) }
+        quickModelIDs = ids
+    }
+
     private var thinkingEffortBinding: Binding<ThinkingEffort> {
         Binding(
             get: { viewModel.conversation.thinkingEffort },
@@ -116,9 +149,11 @@ struct ChatView: View {
         )
     }
 
-    private var shortModelName: String {
-        viewModel.conversation.modelID.split(separator: "/").last.map(String.init)
-            ?? viewModel.conversation.modelID
+    private var shortModelName: String { Self.shortName(viewModel.conversation.modelID) }
+
+    private static func shortName(_ modelID: String) -> String {
+        if modelID == AppleFoundationModel.id { return AppleFoundationModel.displayName }
+        return modelID.split(separator: "/").last.map(String.init) ?? modelID
     }
 
     private var emptyState: some View {
@@ -153,11 +188,7 @@ struct ChatView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(FaroColor.inkRaised, in: .rect(cornerRadius: 14))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(FaroColor.edge, lineWidth: 1)
-            }
+            .faroCard()
         }
     }
 
@@ -180,11 +211,7 @@ struct ChatView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(FaroColor.inkRaised, in: .rect(cornerRadius: 14))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(FaroColor.error.opacity(0.35), lineWidth: 1)
-            }
+            .faroCard(border: FaroColor.error.opacity(0.35))
         }
     }
 

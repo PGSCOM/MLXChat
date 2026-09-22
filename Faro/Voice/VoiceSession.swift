@@ -27,7 +27,10 @@ final class VoiceSession: NSObject {
     private(set) var amplitude: Double = 0
     var errorMessage: String?
 
-    private let recognizer = SFSpeechRecognizer(locale: .current)
+    /// Rebuilt on every tap of the mic from `VoiceSettings`, so changing
+    /// the language mid-session just works — no staleness window, no
+    /// observation of the settings store.
+    private var recognizer: SFSpeechRecognizer?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private let audioEngine = AVAudioEngine()
@@ -50,10 +53,12 @@ final class VoiceSession: NSObject {
 
     func startListening() {
         guard state == .idle else { return }
-        guard let recognizer, recognizer.isAvailable else {
+        guard let recognizer = SFSpeechRecognizer(locale: VoiceSettings.recognitionLocale),
+              recognizer.isAvailable else {
             errorMessage = "El reconocimiento de voz no está disponible en este idioma."
             return
         }
+        self.recognizer = recognizer
         transcript = ""
         errorMessage = nil
 
@@ -69,7 +74,9 @@ final class VoiceSession: NSObject {
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = true
+        // Forcing on-device for a language whose assets aren't installed
+        // just makes the request fail, so ask for it only where it exists.
+        request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
         self.request = request
 
         let inputNode = audioEngine.inputNode
@@ -96,7 +103,20 @@ final class VoiceSession: NSObject {
                 if let result {
                     self.transcript = result.bestTranscription.formattedString
                 }
-                if error != nil || result?.isFinal == true {
+                // `stopListening()` cancels the task, which then reports a
+                // cancellation error after we've already moved on — only a
+                // failure while still listening is a real failure. Without
+                // the state guard every normal turn would show an error;
+                // without handling it at all the UI sat on "Escuchando…"
+                // for ever, because `teardownAudio()` doesn't touch state.
+                if let error, self.state == .listening {
+                    self.errorMessage = error.localizedDescription
+                    self.teardownAudio()
+                    self.deactivateAudioSession()
+                    self.state = .idle
+                    return
+                }
+                if result?.isFinal == true {
                     self.teardownAudio()
                 }
             }
@@ -120,7 +140,7 @@ final class VoiceSession: NSObject {
         try? activateAudioSession()
         state = .speaking
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: Locale.current.identifier)
+        utterance.voice = VoiceSettings.voice()
         synthesizer.speak(utterance)
     }
 
@@ -156,9 +176,13 @@ final class VoiceSession: NSObject {
 
     private func teardownAudio() {
         amplitude = 0
-        guard audioEngine.isRunning else { return }
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
+        // The engine guard only covers the engine: with it wrapping the
+        // whole body, a teardown after the engine had already stopped left
+        // the request and the task alive.
+        if audioEngine.isRunning {
+            audioEngine.stop()
+            audioEngine.inputNode.removeTap(onBus: 0)
+        }
         request?.endAudio()
         request = nil
         task?.cancel()

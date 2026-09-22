@@ -40,6 +40,11 @@ actor InferenceEngine {
     /// its container alive, so evicting a model has to take its sessions
     /// with it or nothing is actually freed.
     private var sessions: [UUID: (modelID: String, session: ChatSession)] = [:]
+    /// Whether a model's chat template opens the reasoning block inside the
+    /// *prompt* (Qwen3.5 and kin), so the model's own output starts already
+    /// inside it and only ever emits the closing tag. Measured once per
+    /// load by rendering the template, never guessed from the repo id.
+    private var templateOpensThink: [String: Bool] = [:]
     private var configuredMemoryLimit = false
 
     private init() {}
@@ -75,6 +80,7 @@ actor InferenceEngine {
             progressHandler: progress
         )
         containers = [modelID: container]
+        templateOpensThink = [modelID: await Self.promptOpensThink(container)]
         sessions = sessions.filter { $0.value.modelID == modelID }
         return container
     }
@@ -84,7 +90,48 @@ actor InferenceEngine {
     /// silently serving the now-orphaned in-memory copy.
     func evictContainer(modelID: String) {
         containers[modelID] = nil
+        templateOpensThink[modelID] = nil
         sessions = sessions.filter { $0.value.modelID != modelID }
+    }
+
+    /// Renders the model's chat template for a throwaway turn and asks
+    /// whether the generation prompt it produces ends inside an open
+    /// `<think>`. Templates that pre-close it (`<think>\n\n</think>`, the
+    /// thinking-disabled path) correctly answer no.
+    private static func promptOpensThink(_ container: ModelContainer) async -> Bool {
+        let messages: [MLXLMCommon.Message] = [["role": "user", "content": "hola"]]
+        let prompt = try? await container.perform { (context: ModelContext) in
+            context.tokenizer.decode(tokenIds: try context.tokenizer.applyChatTemplate(messages: messages))
+        }
+        return prompt.map(Self.endsInsideThink) ?? false
+    }
+
+    /// True when the last `<think>` in the text has no `</think>` after it.
+    static func endsInsideThink(_ text: String) -> Bool {
+        guard let open = text.range(of: "<think>", options: .backwards) else { return false }
+        guard let close = text.range(of: "</think>", options: .backwards) else { return true }
+        return close.lowerBound < open.lowerBound
+    }
+
+    /// Replays the opening tag the template already spent in the prompt, so
+    /// every consumer's `ThinkTagSplitter` sees a normal `<think>` block
+    /// from the first token instead of only learning at the closing tag
+    /// that the whole answer so far was reasoning.
+    private static func replayingOpenTag(
+        _ stream: AsyncThrowingStream<Generation, Error>
+    ) -> AsyncThrowingStream<Generation, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                continuation.yield(.chunk("<think>"))
+                do {
+                    for try await generation in stream { continuation.yield(generation) }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 
     private func chatMessages(from history: [HistoryTurn]) -> [Chat.Message] {
@@ -146,6 +193,9 @@ actor InferenceEngine {
     /// changing its model) so the next turn rebuilds it from scratch.
     func invalidateSession(conversationID: UUID) {
         sessions[conversationID] = nil
+        Task { @MainActor in
+            AppleFoundationEngine.shared.invalidateSession(conversationID: conversationID)
+        }
     }
 
     func streamResponse(
@@ -158,11 +208,21 @@ actor InferenceEngine {
         imageData: Data? = nil,
         progress: @Sendable @escaping (Progress) -> Void = { _ in }
     ) async throws -> AsyncThrowingStream<Generation, Error> {
+        // Apple's model isn't a Hugging Face repo: branch before anything
+        // touches MLX, the container cache or HubCache.
+        if AppleFoundationModel.isAppleFoundation(modelID) {
+            return try await AppleFoundationEngine.shared.streamResponse(
+                conversationID: conversationID, systemPrompt: systemPrompt,
+                history: history, settings: settings, prompt: prompt, imageData: imageData
+            )
+        }
         let session = try await session(
             conversationID: conversationID, modelID: modelID,
             systemPrompt: systemPrompt, history: history, settings: settings,
             progress: progress
         )
-        return session.streamDetails(to: prompt, images: Self.images(from: imageData))
+        let stream = session.streamDetails(to: prompt, images: Self.images(from: imageData))
+        guard templateOpensThink[modelID] == true else { return stream }
+        return Self.replayingOpenTag(stream)
     }
 }

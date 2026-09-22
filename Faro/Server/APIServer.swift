@@ -100,6 +100,7 @@ final class APIServer {
             // cache, plus the curated ids it would fetch on first use.
             let ids = Set(ModelCacheStore.downloadedIDs())
                 .union(CuratedModel.all.map(\.id))
+                .union([AppleFoundationModel.id])
             let entries = ids.sorted().map { ModelListResponse.Entry(id: $0) }
             let data = (try? JSONEncoder().encode(ModelListResponse(data: entries))) ?? Data()
             return HTTPResponse(statusCode: .ok, headers: [.contentType: "application/json"], body: data)
