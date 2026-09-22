@@ -25,7 +25,6 @@ struct RootView: View {
                 emptyDetail
             }
         }
-        .preferredColorScheme(.dark)
         .task {
             if selectedID == nil { selectedID = conversations.first?.id }
         }
