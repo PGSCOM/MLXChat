@@ -315,51 +315,45 @@ private struct ModelRow: View {
     let onSelect: () -> Void
 
     var body: some View {
-        // The trailing cancel button needs its own tap target, so the main
-        // content and `trailing` are siblings rather than one row-wide
-        // Button — same shape as `DownloadedModelRow`'s delete button.
+        // Only the cancel button gets pulled out as its own tap target —
+        // everything else (including the download arrow / checkmark /
+        // "Usar") stays inside the row-wide button, same as before the
+        // cancel button existed. Nesting a real button inside another
+        // button's label is what actually breaks tapping in SwiftUI, not
+        // having a wide tappable row.
         HStack(spacing: 12) {
             Button(action: primaryAction) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .foregroundStyle(FaroColor.bone)
-                        .lineLimit(1)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(FaroColor.ash)
-                    if let status = coordinator.status[id] {
-                        Text(ModelLoadStatusFormatter.line(status))
-                            .font(.system(.caption2, design: .monospaced))
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(title)
+                            .foregroundStyle(FaroColor.bone)
+                            .lineLimit(1)
+                        Text(subtitle)
+                            .font(.caption)
                             .foregroundStyle(FaroColor.ash)
+                        if let status = coordinator.status[id] {
+                            Text(ModelLoadStatusFormatter.line(status))
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(FaroColor.ash)
+                        }
+                        if let warning = coordinator.warnings[id] {
+                            Text(warning)
+                                .font(.caption2)
+                                .foregroundStyle(FaroColor.lamp)
+                        }
+                        if let error = coordinator.errors[id] {
+                            Text(error)
+                                .font(.caption2)
+                                .foregroundStyle(FaroColor.error)
+                        }
                     }
-                    if let warning = coordinator.warnings[id] {
-                        Text(warning)
-                            .font(.caption2)
-                            .foregroundStyle(FaroColor.lamp)
-                    }
-                    if let error = coordinator.errors[id] {
-                        Text(error)
-                            .font(.caption2)
-                            .foregroundStyle(FaroColor.error)
-                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    trailing
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
-            trailing
-        }
-    }
 
-    @ViewBuilder private var trailing: some View {
-        if isSelected {
-            Image(systemName: "checkmark")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(FaroColor.lamp)
-        } else if let status = coordinator.status[id] {
-            HStack(spacing: 10) {
-                ProgressView(value: status.fraction)
-                    .frame(width: 56)
-                    .tint(FaroColor.lamp)
+            if !isSelected, coordinator.status[id] != nil {
                 Button {
                     coordinator.cancel(id: id)
                 } label: {
@@ -370,6 +364,18 @@ private struct ModelRow: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Cancelar descarga de \(title)")
             }
+        }
+    }
+
+    @ViewBuilder private var trailing: some View {
+        if isSelected {
+            Image(systemName: "checkmark")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(FaroColor.lamp)
+        } else if let status = coordinator.status[id] {
+            ProgressView(value: status.fraction)
+                .frame(width: 56)
+                .tint(FaroColor.lamp)
         } else if isDownloaded {
             Text("Usar")
                 .font(.caption.weight(.medium))
