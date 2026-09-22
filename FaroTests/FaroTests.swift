@@ -367,3 +367,31 @@ struct PersonalizationTests {
         #expect(Personalization.preamble(style: .conciso) == "El usuario se llama Ada.\nResponde de forma breve y directa, sin rodeos.")
     }
 }
+
+struct ToolCallRecordTests {
+    @Test func statusRoundTripsThroughJSON() throws {
+        let calls = [
+            ToolCallRecord(id: UUID(), name: "tavily_search", isSkill: false, status: .running),
+            ToolCallRecord(id: UUID(), name: "Revisión de código", isSkill: true, status: .succeeded(preview: "ok")),
+            ToolCallRecord(id: UUID(), name: "tavily_search", isSkill: false, status: .failed("timeout")),
+        ]
+        let data = try JSONEncoder().encode(calls)
+        let decoded = try JSONDecoder().decode([ToolCallRecord].self, from: data)
+        #expect(decoded == calls)
+    }
+
+    @Test func chatMessageDefaultsToNoToolCalls() {
+        let message = ChatMessage(role: .assistant, content: "")
+        #expect(message.toolCalls.isEmpty)
+    }
+
+    @Test func chatMessageToolCallsRoundTripThroughTheStoredRawString() {
+        let message = ChatMessage(role: .assistant, content: "")
+        let id = UUID()
+        message.toolCalls = [ToolCallRecord(id: id, name: "search_web", isSkill: false, status: .running)]
+        #expect(message.toolCalls == [ToolCallRecord(id: id, name: "search_web", isSkill: false, status: .running)])
+
+        message.toolCalls[0].status = .succeeded(preview: "3 resultados")
+        #expect(message.toolCalls[0].status == .succeeded(preview: "3 resultados"))
+    }
+}

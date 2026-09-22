@@ -46,6 +46,13 @@ actor InferenceEngine {
     /// load by rendering the template, never guessed from the repo id.
     private var templateOpensThink: [String: Bool] = [:]
     private var configuredMemoryLimit = false
+    /// Where tool-call start/finish events for the turn in flight go, per
+    /// conversation. A session (and its baked-in `toolDispatch` closure) is
+    /// reused across turns, so this is looked up by conversation id at call
+    /// time rather than captured once — a `ToolCallEvent` is `Sendable` and
+    /// crossing the actor boundary this way avoids ever having to smuggle a
+    /// non-Sendable `ChatMessage` into a `@Sendable` closure.
+    private var toolCallContinuations: [UUID: AsyncStream<ToolCallEvent>.Continuation] = [:]
 
     private init() {}
 
@@ -175,12 +182,24 @@ actor InferenceEngine {
         let dispatch: (@Sendable (ToolCall) async throws -> String)? = tools.isEmpty
             ? nil
             : { @Sendable (call: ToolCall) async throws -> String in
-                // A skill call resolves right here — its "result" is its
-                // instructions, never sent over MCP.
-                if let instructions = SkillStore.instructions(forTool: call.function.name) {
-                    return instructions
+                let callID = UUID()
+                let skill = SkillStore.all.first { $0.mode == .automatic && $0.toolName == call.function.name }
+                await self.reportToolCall(
+                    conversationID: conversationID,
+                    .started(id: callID, name: skill?.name ?? call.function.name, isSkill: skill != nil)
+                )
+                do {
+                    // A skill call resolves right here — its "result" is its
+                    // instructions, never sent over MCP.
+                    let result: String
+                    if let skill { result = skill.instructions } else { result = try await MCPConnectionManager.shared.dispatch(call) }
+                    let preview = String(result.prefix(160))
+                    await self.reportToolCall(conversationID: conversationID, .finished(id: callID, status: .succeeded(preview: preview)))
+                    return result
+                } catch {
+                    await self.reportToolCall(conversationID: conversationID, .finished(id: callID, status: .failed(error.localizedDescription)))
+                    throw error
                 }
-                return try await MCPConnectionManager.shared.dispatch(call)
             }
 
         let session = ChatSession(
@@ -199,9 +218,25 @@ actor InferenceEngine {
     /// changing its model) so the next turn rebuilds it from scratch.
     func invalidateSession(conversationID: UUID) {
         sessions[conversationID] = nil
+        toolCallContinuations[conversationID] = nil
         Task { @MainActor in
             AppleFoundationEngine.shared.invalidateSession(conversationID: conversationID)
         }
+    }
+
+    private func reportToolCall(conversationID: UUID, _ event: ToolCallEvent) {
+        toolCallContinuations[conversationID]?.yield(event)
+    }
+
+    /// Tool-call events for one conversation's turn in flight. Call this
+    /// right before `streamResponse` and consume it concurrently — each
+    /// call replaces the previous listener, so it's always this turn's
+    /// caller that hears about a call, even though the session (and its
+    /// `toolDispatch` closure) may be several turns old.
+    func toolCallEvents(conversationID: UUID) -> AsyncStream<ToolCallEvent> {
+        let (stream, continuation) = AsyncStream<ToolCallEvent>.makeStream()
+        toolCallContinuations[conversationID] = continuation
+        return stream
     }
 
     func streamResponse(
@@ -215,7 +250,9 @@ actor InferenceEngine {
         progress: @Sendable @escaping (Progress) -> Void = { _ in }
     ) async throws -> AsyncThrowingStream<Generation, Error> {
         // Apple's model isn't a Hugging Face repo: branch before anything
-        // touches MLX, the container cache or HubCache.
+        // touches MLX, the container cache or HubCache. It also has no
+        // tool support wired in (see AppleFoundationEngine), so there is
+        // nothing to report.
         if AppleFoundationModel.isAppleFoundation(modelID) {
             return try await AppleFoundationEngine.shared.streamResponse(
                 conversationID: conversationID, systemPrompt: systemPrompt,

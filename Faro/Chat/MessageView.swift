@@ -22,6 +22,13 @@ struct MessageView: View {
         case .assistant:
             VStack(alignment: .leading, spacing: 10) {
                 reasoning
+                // Shown as soon as a call starts (mid-stream, before the
+                // model's own written answer even begins) and stays after
+                // the turn ends — visibility into tool/skill use, not just
+                // a transient status line, like Claude Code's tool blocks.
+                ForEach(message.toolCalls) { call in
+                    ToolCallCard(call: call)
+                }
                 if !message.content.isEmpty {
                     // Artifacts are only derived once the turn is done —
                     // parsing mid-stream could turn a half-written fence
@@ -216,6 +223,95 @@ struct ReasoningCard: View {
     nonisolated static func elapsedLabel(since start: Date, at date: Date) -> String {
         let seconds = max(0, Int(date.timeIntervalSince(start)))
         return seconds < 60 ? "\(seconds) s" : "\(seconds / 60) min \(seconds % 60) s"
+    }
+}
+
+/// One row per tool or skill call. Same card language as `ReasoningCard`:
+/// a running call shows a spinner and no chevron (nothing to open yet), a
+/// finished one becomes tappable to reveal the result or error beneath it.
+private struct ToolCallCard: View {
+    let call: ToolCallRecord
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header
+            if expanded, let detail {
+                Text(detail)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(FaroColor.ash)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .faroCard()
+    }
+
+    private var detail: String? {
+        switch call.status {
+        case .running: nil
+        case .succeeded(let preview): preview.isEmpty ? nil : preview
+        case .failed(let message): message
+        }
+    }
+
+    @ViewBuilder private var header: some View {
+        if detail != nil {
+            Button {
+                withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
+            } label: {
+                headerRow
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(expanded ? "Ocultar el resultado" : "Mostrar el resultado")
+        } else {
+            headerRow
+        }
+    }
+
+    private var headerRow: some View {
+        HStack(spacing: 8) {
+            icon
+            Text(title)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(FaroColor.bone)
+            Spacer(minLength: 8)
+            if detail != nil {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(FaroColor.ash)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+            }
+        }
+        .contentShape(.rect)
+    }
+
+    private var label: String { call.isSkill ? "Skill: \(call.name)" : call.name }
+
+    private var title: String {
+        switch call.status {
+        case .running: "Usando \(label)…"
+        case .succeeded: label
+        case .failed: "\(label) falló"
+        }
+    }
+
+    @ViewBuilder private var icon: some View {
+        switch call.status {
+        case .running:
+            ProgressView().controlSize(.small).tint(FaroColor.lamp)
+        case .succeeded:
+            Image(systemName: call.isSkill ? "sparkles" : "wrench.and.screwdriver")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(FaroColor.lamp)
+        case .failed:
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(FaroColor.error)
+        }
     }
 }
 

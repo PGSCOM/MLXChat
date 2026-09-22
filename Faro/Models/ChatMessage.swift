@@ -25,6 +25,10 @@ final class ChatMessage {
     /// this out of the main SwiftData file instead of bloating it.
     @Attribute(.externalStorage) var imageData: Data?
     var conversation: Conversation?
+    /// JSON-encoded `[ToolCallRecord]` — a stored string, not a relationship,
+    /// so a lightweight-migration default (`= "[]"`) is enough to add this
+    /// to existing conversations, same trick as `Skill` in `UserDefaults`.
+    var toolCallsRaw: String = "[]"
 
     init(role: MessageRole, content: String, reasoning: String? = nil, imageData: Data? = nil) {
         id = UUID()
@@ -37,5 +41,10 @@ final class ChatMessage {
 
     var role: MessageRole {
         MessageRole(rawValue: roleRaw) ?? .user
+    }
+
+    var toolCalls: [ToolCallRecord] {
+        get { (try? JSONDecoder().decode([ToolCallRecord].self, from: Data(toolCallsRaw.utf8))) ?? [] }
+        set { toolCallsRaw = (try? String(data: JSONEncoder().encode(newValue), encoding: .utf8)) ?? "[]" }
     }
 }

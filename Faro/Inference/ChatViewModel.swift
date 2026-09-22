@@ -134,6 +134,27 @@ final class ChatViewModel {
             var splitter = ThinkTagSplitter()
             let streamStartedAt = Date()
             var reasoningStartedAt: Date?
+            // Registered before the stream starts, so a tool call on the
+            // very first turn isn't missed. Runs concurrently with the
+            // generation loop below rather than as a callback threaded
+            // through the actor boundary, since it mutates `assistantMessage`
+            // (a SwiftData model, not `Sendable`) directly — safe here
+            // because this nested task, like the outer one, inherits this
+            // method's MainActor isolation.
+            let toolCallTask = Task {
+                for await event in await InferenceEngine.shared.toolCallEvents(conversationID: conversationID) {
+                    switch event {
+                    case .started(let id, let name, let isSkill):
+                        assistantMessage.toolCalls.append(ToolCallRecord(id: id, name: name, isSkill: isSkill, status: .running))
+                    case .finished(let id, let status):
+                        guard let index = assistantMessage.toolCalls.firstIndex(where: { $0.id == id }) else { continue }
+                        var calls = assistantMessage.toolCalls
+                        calls[index].status = status
+                        assistantMessage.toolCalls = calls
+                    }
+                }
+            }
+            defer { toolCallTask.cancel() }
             do {
                 let stream = try await InferenceEngine.shared.streamResponse(
                     conversationID: conversationID, modelID: modelID,
@@ -176,7 +197,8 @@ final class ChatViewModel {
                         assistantMessage.tokensPerSecond = info.tokensPerSecond
                     default:
                         // Tool calls are resolved inside ChatSession itself
-                        // (see InferenceEngine); nothing else reaches here.
+                        // (see InferenceEngine) and reported separately via
+                        // `toolCallTask` above; nothing else reaches here.
                         break
                     }
                 }
