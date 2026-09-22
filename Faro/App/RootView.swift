@@ -5,15 +5,18 @@ struct RootView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Conversation.createdAt, order: .reverse) private var conversations: [Conversation]
     @Query private var mcpServers: [MCPServerConfig]
+    @Query(sort: \Project.createdAt, order: .reverse) private var projects: [Project]
     @State private var selectedID: UUID?
 
     var body: some View {
         NavigationSplitView {
             ConversationListView(
                 conversations: conversations,
+                projects: projects,
                 selection: $selectedID,
                 onNew: createConversation,
-                onDelete: delete
+                onDelete: delete,
+                onDeleteProject: deleteProject
             )
         } detail: {
             if let conversation = conversations.first(where: { $0.id == selectedID }) {
@@ -55,7 +58,7 @@ struct RootView: View {
                 Text("Faro")
                     .font(.system(size: 34, weight: .regular, design: .serif))
                     .foregroundStyle(FaroColor.bone)
-                Button(action: createConversation) {
+                Button { createConversation(in: nil) } label: {
                     Text("Nueva conversación")
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(FaroColor.ink)
@@ -68,14 +71,18 @@ struct RootView: View {
         }
     }
 
-    private func createConversation() {
+    /// A conversation started inside a project uses the project's
+    /// instructions instead of the app-wide default — the project's
+    /// context block already carries them via `effectiveSystemPrompt`.
+    private func createConversation(in project: Project?) {
         let conversation = Conversation(
             modelID: DefaultModel.resolve(
                 remembered: AppSettings.lastModelID,
                 downloaded: ModelCacheStore.downloadedIDs()
             ),
-            systemPrompt: AppSettings.defaultSystemPrompt
+            systemPrompt: project == nil ? AppSettings.defaultSystemPrompt : ""
         )
+        conversation.project = project
         modelContext.insert(conversation)
         selectedID = conversation.id
     }
@@ -84,9 +91,15 @@ struct RootView: View {
         if selectedID == conversation.id { selectedID = nil }
         modelContext.delete(conversation)
     }
+
+    /// `.nullify` on `Conversation.project` means its conversations survive
+    /// as loose chats — deleting a project shouldn't take history with it.
+    private func deleteProject(_ project: Project) {
+        modelContext.delete(project)
+    }
 }
 
 #Preview {
     RootView()
-        .modelContainer(for: [Conversation.self, ChatMessage.self, MCPServerConfig.self], inMemory: true)
+        .modelContainer(for: [Conversation.self, ChatMessage.self, Project.self, MCPServerConfig.self], inMemory: true)
 }

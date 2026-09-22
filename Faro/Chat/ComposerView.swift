@@ -10,8 +10,6 @@ struct ComposerView: View {
     @State private var pickerItem: PhotosPickerItem?
     @State private var isDropTargeted = false
 
-    private static let fileTypes: [UTType] = [.pdf, .plainText, .commaSeparatedText, .text]
-
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let attachment = viewModel.pendingAttachment {
@@ -108,7 +106,7 @@ struct ComposerView: View {
         }
         .fileImporter(
             isPresented: $showFileImporter,
-            allowedContentTypes: Self.fileTypes,
+            allowedContentTypes: AttachmentExtractor.fileTypes,
             onCompletion: handlePickedFile
         )
         .onChange(of: pickerItem) {
@@ -120,7 +118,7 @@ struct ComposerView: View {
             }
             self.pickerItem = nil
         }
-        .onDrop(of: [.image] + Self.fileTypes, isTargeted: $isDropTargeted, perform: handleDrop)
+        .onDrop(of: [.image] + AttachmentExtractor.fileTypes, isTargeted: $isDropTargeted, perform: handleDrop)
     }
 
     /// Also true while generating: the same button becomes "stop", and it
@@ -139,8 +137,6 @@ struct ComposerView: View {
 
     private func handlePickedFile(_ result: Result<URL, Error>) {
         guard case .success(let url) = result else { return }
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
         viewModel.attach(url: url)
     }
 
@@ -158,7 +154,7 @@ struct ComposerView: View {
             return true
         }
 
-        for type in Self.fileTypes where provider.hasItemConformingToTypeIdentifier(type.identifier) {
+        for type in AttachmentExtractor.fileTypes where provider.hasItemConformingToTypeIdentifier(type.identifier) {
             provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
                 // Only valid synchronously here — the item provider may
                 // delete its temp file the moment this closure returns.

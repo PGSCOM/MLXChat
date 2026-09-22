@@ -44,7 +44,7 @@ final class ChatViewModel {
 
     func attach(url: URL) {
         do {
-            pendingAttachment = try AttachmentExtractor.extractText(from: url)
+            pendingAttachment = try AttachmentExtractor.extractSecurityScoped(url)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -117,7 +117,7 @@ final class ChatViewModel {
         let systemPrompt = [
             Personalization.preamble(style: style),
             SkillStore.alwaysOnInstructions(),
-            conversation.systemPrompt,
+            conversation.effectiveSystemPrompt,
             effort.systemHint,
         ].filter { !$0.isEmpty }.joined(separator: "\n\n")
         let promptForModel = text + effort.promptSuffix

@@ -16,6 +16,6 @@ struct FaroApp: App {
         WindowGroup {
             RootView()
         }
-        .modelContainer(for: [Conversation.self, ChatMessage.self, MCPServerConfig.self])
+        .modelContainer(for: [Conversation.self, ChatMessage.self, Project.self, MCPServerConfig.self])
     }
 }
