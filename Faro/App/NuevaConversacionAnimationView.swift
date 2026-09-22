@@ -1,16 +1,24 @@
+import Lottie
 import SwiftUI
 
-/// The illustration shown before a conversation exists — a static PNG, not a
-/// live animation. The source `.dotLottie` never actually animated (every
-/// frame across its 10-second timeline was pixel-identical), and lottie-ios
-/// rendered its colors wrong on-device, so it's baked to a bitmap once
-/// instead: simpler, and it reads correctly in both light and dark mode with
-/// no extra work.
+/// The illustration shown before a conversation exists, rendered by Lottie's
+/// own engine rather than flattened to a bitmap. lottie-ios has no support
+/// for dotLottie's slot/theme system, so each appearance ships as its own
+/// pre-baked JSON (`NuevaConversacionClaro`/`Oscuro`) with the file's real
+/// "Claro" theme colors already applied — verified pixel-for-pixel against
+/// the official dotlottie-web renderer's live `.setTheme()` output, so it's
+/// not a guess at what those colors should be.
 struct NuevaConversacionAnimationView: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var animation: LottieAnimation? {
+        LottieAnimation.named(colorScheme == .light ? "NuevaConversacionClaro" : "NuevaConversacionOscuro")
+    }
+
     var body: some View {
-        Image("NuevaConversacion")
+        LottieView(animation: animation)
+            .playing(loopMode: .loop)
             .resizable()
-            .scaledToFit()
             .accessibilityHidden(true)
     }
 }
