@@ -1,24 +1,17 @@
 import SwiftUI
-import Lottie
 
-/// The empty-state animation shown before a conversation exists. Bundled as
-/// two plain-JSON Lottie exports rather than the original `.dotLottie` —
-/// lottie-ios has no runtime support for dotLottie's "theme" slots, so the
-/// light-mode recolor (originally the file's "Claro" theme) is baked in
-/// once, offline. That also skips the zip-decompress-to-temp-file dance
-/// `DotLottieFile` would otherwise do on every launch.
+/// The illustration shown before a conversation exists — a static PNG, not a
+/// live animation. The source `.dotLottie` never actually animated (every
+/// frame across its 10-second timeline was pixel-identical), and lottie-ios
+/// rendered its colors wrong on-device, so it's baked to a bitmap once
+/// instead: simpler, and it reads correctly in both light and dark mode with
+/// no extra work.
 struct NuevaConversacionAnimationView: View {
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     var body: some View {
-        LottieView {
-            LottieAnimation.named(colorScheme == .light ? "NuevaConversacionClaro" : "NuevaConversacionOscuro")
-        }
-        .reloadAnimationTrigger(colorScheme)
-        .resizable()
-        .playbackMode(reduceMotion ? .paused(at: .frame(0)) : .playing(.fromProgress(0, toProgress: 1, loopMode: .loop)))
-        .accessibilityHidden(true)
+        Image("NuevaConversacion")
+            .resizable()
+            .scaledToFit()
+            .accessibilityHidden(true)
     }
 }
 
