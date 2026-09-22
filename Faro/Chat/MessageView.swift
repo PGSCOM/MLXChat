@@ -202,7 +202,10 @@ struct ReasoningCard: View {
         isLive ? "Pensando…" : Self.durationLabel(seconds)
     }
 
-    static func durationLabel(_ seconds: Double?) -> String {
+    // Pure functions with no view state — `nonisolated` so the tests (and
+    // any other non-MainActor caller) can call them synchronously instead
+    // of inheriting `@MainActor` from `ReasoningCard: View`.
+    nonisolated static func durationLabel(_ seconds: Double?) -> String {
         guard let seconds, seconds >= 1 else { return "Pensamientos" }
         let whole = Int(seconds)
         return whole < 60
@@ -210,7 +213,7 @@ struct ReasoningCard: View {
             : "Razonó durante \(whole / 60) min \(whole % 60) s"
     }
 
-    static func elapsedLabel(since start: Date, at date: Date) -> String {
+    nonisolated static func elapsedLabel(since start: Date, at date: Date) -> String {
         let seconds = max(0, Int(date.timeIntervalSince(start)))
         return seconds < 60 ? "\(seconds) s" : "\(seconds / 60) min \(seconds % 60) s"
     }
