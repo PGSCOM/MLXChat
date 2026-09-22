@@ -1,5 +1,6 @@
 import Foundation
 import PDFKit
+import UniformTypeIdentifiers
 
 struct ExtractedAttachment: Sendable {
     let fileName: String
@@ -27,6 +28,18 @@ enum AttachmentExtractor {
             case .unreadableText: return "No se pudo leer el archivo como texto."
             }
         }
+    }
+
+    /// File types the composer and the project knowledge picker both accept.
+    static let fileTypes: [UTType] = [.pdf, .plainText, .commaSeparatedText, .text]
+
+    /// Same as `extractText(from:)`, but wraps the security-scoped access a
+    /// `.fileImporter` result requires. Callers reading a URL straight off
+    /// disk (drag-and-drop's temp file) should keep using `extractText`.
+    static func extractSecurityScoped(_ url: URL) throws -> ExtractedAttachment {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+        return try extractText(from: url)
     }
 
     static func extractText(from url: URL) throws -> ExtractedAttachment {

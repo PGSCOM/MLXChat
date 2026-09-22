@@ -31,12 +31,26 @@ final class Conversation {
     @Relationship(deleteRule: .cascade)
     var messages: [ChatMessage] = []
 
+    /// The project this conversation belongs to, if any. Deleting a project
+    /// nullifies this rather than cascading — losing a project's grouping
+    /// shouldn't take its chat history down with it.
+    var project: Project?
+
     init(title: String = "Nueva conversación", modelID: String, systemPrompt: String = "") {
         id = UUID()
         self.title = title
         self.modelID = modelID
         self.systemPrompt = systemPrompt
         createdAt = .now
+    }
+
+    /// The real system prompt sent to the model: the project's context
+    /// (instructions + knowledge documents) first, then this conversation's
+    /// own prompt.
+    var effectiveSystemPrompt: String {
+        [project?.contextBlock ?? "", systemPrompt]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
     }
 
     var effectiveGenerationSettings: GenerationSettings {

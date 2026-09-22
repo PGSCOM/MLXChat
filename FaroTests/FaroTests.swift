@@ -213,3 +213,48 @@ struct ReasoningCardTests {
         #expect(ReasoningCard.elapsedLabel(since: start, at: start.addingTimeInterval(65)) == "1 min 5 s")
     }
 }
+
+struct ProjectContextTests {
+    @Test func isEmptyWithNoInstructionsAndNoDocuments() {
+        let project = Project(name: "Sin nada")
+        #expect(project.contextBlock.isEmpty)
+    }
+
+    @Test func carriesJustInstructionsWithNoTrailingSeparator() {
+        let project = Project(name: "Solo instrucciones", instructions: "Responde en verso.")
+        #expect(project.contextBlock == "Responde en verso.")
+    }
+
+    @Test func headersEachDocumentWithItsFileName() {
+        let project = Project(name: "Con documentos")
+        project.documents = [
+            ProjectDocument(fileName: "apuntes.md", text: "notas", wasTruncated: false)
+        ]
+        #expect(project.contextBlock.contains("Documento del proyecto: apuntes.md"))
+        #expect(project.contextBlock.contains("notas"))
+    }
+
+    /// The regression that matters: a project whose knowledge blows past
+    /// the character budget must still fit inside it, with a visible notice
+    /// instead of silently growing every prompt without bound.
+    @Test func truncatesAtTheKnowledgeLimitWithANotice() {
+        let project = Project(name: "Enorme")
+        project.documents = [
+            ProjectDocument(fileName: "grande.txt", text: String(repeating: "x", count: Project.knowledgeCharacterLimit + 500), wasTruncated: false)
+        ]
+        #expect(project.contextBlock.count <= Project.knowledgeCharacterLimit + 100)
+        #expect(project.contextBlock.contains("se truncó por longitud"))
+    }
+
+    @Test func conversationPrependsItsProjectsContextBlock() {
+        let project = Project(name: "Proyecto", instructions: "Usa tono formal.")
+        let conversation = Conversation(modelID: "mlx-community/test", systemPrompt: "Sé breve.")
+        conversation.project = project
+        #expect(conversation.effectiveSystemPrompt == "Usa tono formal.\n\nSé breve.")
+    }
+
+    @Test func conversationWithoutAProjectKeepsJustItsOwnPrompt() {
+        let conversation = Conversation(modelID: "mlx-community/test", systemPrompt: "Sé breve.")
+        #expect(conversation.effectiveSystemPrompt == "Sé breve.")
+    }
+}

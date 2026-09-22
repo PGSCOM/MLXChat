@@ -44,7 +44,7 @@ final class ChatViewModel {
 
     func attach(url: URL) {
         do {
-            pendingAttachment = try AttachmentExtractor.extractText(from: url)
+            pendingAttachment = try AttachmentExtractor.extractSecurityScoped(url)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -113,7 +113,7 @@ final class ChatViewModel {
         let effort = conversation.thinkingEffort
         // The hint text goes to the model only — the saved/shown user
         // message (`text`, already persisted above) stays clean.
-        let systemPrompt = [conversation.systemPrompt, effort.systemHint]
+        let systemPrompt = [conversation.effectiveSystemPrompt, effort.systemHint]
             .filter { !$0.isEmpty }.joined(separator: "\n")
         let promptForModel = text + effort.promptSuffix
         let settings = conversation.effectiveGenerationSettings
