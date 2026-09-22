@@ -303,4 +303,41 @@ struct MarkdownBlockTests {
         #expect(kinds(blocks) == [.paragraph])
         #expect(strings(blocks) == ["sin formato"])
     }
+
+    @Test func rendersAFencedDisplayEquation() {
+        let blocks = MarkdownBlock.blocks(of: "$$\nx^2\n$$")
+        #expect(kinds(blocks) == [.equation("x^2")])
+    }
+
+    @Test func rendersASingleLineDoubleDollarEquation() {
+        let blocks = MarkdownBlock.blocks(of: "$$ x^2 $$")
+        #expect(kinds(blocks) == [.equation("x^2")])
+    }
+
+    @Test func rendersAWholeLineDollarEquationAsDisplay() {
+        let blocks = MarkdownBlock.blocks(of: "$E = mc^2$")
+        #expect(kinds(blocks) == [.equation("E = mc^2")])
+    }
+
+    @Test func aDollarSignInsideASentenceStaysLiteral() {
+        let blocks = MarkdownBlock.blocks(of: "Cuesta $5 y también $10.")
+        #expect(kinds(blocks) == [.paragraph])
+    }
+
+    @Test func parsesAGfmTableWithAlignment() {
+        let blocks = MarkdownBlock.blocks(of: "| A | B |\n| --- | ---: |\n| 1 | 2 |")
+        #expect(blocks.count == 1)
+        guard case .table(let header, let alignment, let rows) = blocks[0].kind else {
+            Issue.record("se esperaba un bloque de tabla")
+            return
+        }
+        #expect(header.map { String($0.characters) } == ["A", "B"])
+        #expect(alignment == [.leading, .trailing])
+        #expect(rows.map { row in row.map { String($0.characters) } } == [["1", "2"]])
+    }
+
+    @Test func doesNotTreatATableInsideACodeFenceAsARealTable() {
+        let blocks = MarkdownBlock.blocks(of: "```\n| a | b |\n| - | - |\n```")
+        #expect(kinds(blocks) == [.code])
+    }
 }
