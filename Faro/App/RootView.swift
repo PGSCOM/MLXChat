@@ -35,7 +35,7 @@ struct RootView: View {
         ZStack {
             FaroColor.ink.ignoresSafeArea()
             VStack(spacing: 8) {
-                BeamView(intensity: 0.2)
+                NuevaConversacionAnimationView()
                     .frame(width: 220, height: 220)
                 Text("Faro")
                     .font(.system(size: 34, weight: .regular, design: .serif))
