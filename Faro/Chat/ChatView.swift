@@ -24,7 +24,7 @@ struct ChatView: View {
                 Spacer()
                 VStack(spacing: 8) {
                     if let status = downloadCoordinator.status[viewModel.conversation.modelID] {
-                        ModelLoadBand(modelName: shortModelName, status: status)
+                        ModelLoadBand(modelName: currentModelName, status: status)
                     }
                     if let error = viewModel.errorMessage {
                         ErrorBand(message: error) { viewModel.errorMessage = nil }
@@ -92,7 +92,7 @@ struct ChatView: View {
             // active model is marked without drawing the checkmark here.
             Picker("Modelo", selection: modelBinding) {
                 ForEach(quickModelIDs, id: \.self) { id in
-                    Text(Self.shortName(id)).tag(id)
+                    Text(shortModelName(id)).tag(id)
                 }
             }
             Button {
@@ -112,7 +112,7 @@ struct ChatView: View {
             }
         } label: {
             HStack(spacing: 5) {
-                Text(shortModelName)
+                Text(currentModelName)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .semibold))
@@ -149,12 +149,7 @@ struct ChatView: View {
         )
     }
 
-    private var shortModelName: String { Self.shortName(viewModel.conversation.modelID) }
-
-    private static func shortName(_ modelID: String) -> String {
-        if modelID == AppleFoundationModel.id { return AppleFoundationModel.displayName }
-        return modelID.split(separator: "/").last.map(String.init) ?? modelID
-    }
+    private var currentModelName: String { shortModelName(viewModel.conversation.modelID) }
 
     private var emptyState: some View {
         VStack(spacing: 18) {
@@ -224,8 +219,11 @@ struct ChatView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 20) {
                     ForEach(messages) { message in
-                        MessageView(message: message, liveTurn: liveTurn(for: message))
-                            .id(message.id)
+                        MessageView(
+                            message: message, liveTurn: liveTurn(for: message),
+                            viewModel: viewModel, quickModelIDs: quickModelIDs
+                        )
+                        .id(message.id)
                     }
                     Color.clear.frame(height: 90).id("bottom")
                 }

@@ -12,6 +12,23 @@ struct ComposerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if viewModel.editingMessage != nil {
+                HStack(spacing: 6) {
+                    Image(systemName: "pencil")
+                    Text("Editando mensaje").lineLimit(1)
+                    Spacer(minLength: 8)
+                    Button {
+                        viewModel.cancelEditing()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Cancelar la edición")
+                }
+                .font(.caption)
+                .foregroundStyle(FaroColor.ash)
+            }
+
             if let attachment = viewModel.pendingAttachment {
                 HStack(spacing: 6) {
                     Image(systemName: "doc.text")
@@ -62,7 +79,10 @@ struct ComposerView: View {
                 }
                 .accessibilityLabel("Adjuntar una imagen")
 
-                TextField("Pregunta lo que quieras", text: $viewModel.draft, axis: .vertical)
+                TextField(
+                    viewModel.editingMessage != nil ? "Edita tu mensaje" : "Pregunta lo que quieras",
+                    text: $viewModel.draft, axis: .vertical
+                )
                     .textFieldStyle(.plain)
                     .foregroundStyle(FaroColor.bone)
                     .tint(FaroColor.lamp)
@@ -119,6 +139,9 @@ struct ComposerView: View {
             self.pickerItem = nil
         }
         .onDrop(of: [.image] + AttachmentExtractor.fileTypes, isTargeted: $isDropTargeted, perform: handleDrop)
+        .onChange(of: viewModel.editingMessage?.id) { _, newValue in
+            if newValue != nil { focused = true }
+        }
     }
 
     /// Also true while generating: the same button becomes "stop", and it

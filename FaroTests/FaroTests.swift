@@ -123,6 +123,90 @@ struct PromptOpensThinkTests {
     }
 }
 
+/// Pure tree operations over a conversation's flat message array — no
+/// SwiftData context needed, since these only read `parentID`/`createdAt`.
+struct MessageTreeTests {
+    private func message(_ role: MessageRole, parent: ChatMessage? = nil, offset: TimeInterval) -> ChatMessage {
+        let message = ChatMessage(role: role, content: "", parentID: parent?.id)
+        message.createdAt = Date(timeIntervalSince1970: offset)
+        return message
+    }
+
+    @Test func pathFollowsParentLinksUpToTheRoot() {
+        let root = message(.user, offset: 0)
+        let reply = message(.assistant, parent: root, offset: 1)
+        let followUp = message(.user, parent: reply, offset: 2)
+        let all = [followUp, root, reply]
+
+        #expect(MessageTree.path(to: followUp.id, in: all).map(\.id) == [root.id, reply.id, followUp.id])
+    }
+
+    @Test func siblingsComeOutOldestFirst() {
+        let root = message(.user, offset: 0)
+        let second = message(.assistant, parent: root, offset: 2)
+        let first = message(.assistant, parent: root, offset: 1)
+        let all = [root, second, first]
+
+        #expect(MessageTree.siblings(of: second, in: all).map(\.id) == [first.id, second.id])
+    }
+
+    @Test func aMessageWithNoSiblingsReturnsJustItself() {
+        let root = message(.user, offset: 0)
+        #expect(MessageTree.siblings(of: root, in: [root]).map(\.id) == [root.id])
+    }
+
+    @Test func latestLeafDescendsThroughTheNewestChildAtEachStep() {
+        let root = message(.user, offset: 0)
+        let oldReply = message(.assistant, parent: root, offset: 1)
+        let newReply = message(.assistant, parent: root, offset: 2)
+        let grandchild = message(.user, parent: newReply, offset: 3)
+        let all = [root, oldReply, newReply, grandchild]
+
+        #expect(MessageTree.latestLeaf(from: root, in: all).id == grandchild.id)
+    }
+
+    @Test func threadLegacyChainsAFlatListByCreationOrder() {
+        let first = message(.user, offset: 0)
+        let second = message(.assistant, offset: 1)
+        let third = message(.user, offset: 2)
+        let all = [third, first, second]
+
+        MessageTree.threadLegacy(all)
+
+        #expect(first.parentID == nil)
+        #expect(second.parentID == first.id)
+        #expect(third.parentID == second.id)
+    }
+
+    @Test func threadLegacyLeavesAnAlreadyLinkedMessagesParentAlone() {
+        // `reply` already has a real parent; threading only ever links
+        // messages that are still roots (`parentID == nil`), so it's
+        // never touched even though it sits between two of them by time.
+        let root = message(.user, offset: 0)
+        let reply = message(.assistant, parent: root, offset: 1)
+        let laterRoot = message(.user, offset: 2)
+        let all = [root, reply, laterRoot]
+
+        MessageTree.threadLegacy(all)
+
+        #expect(reply.parentID == root.id)
+        #expect(laterRoot.parentID == root.id)
+    }
+
+    @Test func promptTextReproducesTheOldInlineFormatWhenThereIsAnAttachment() {
+        let message = ChatMessage(
+            role: .user, content: "Resúmelo",
+            attachmentName: "notas.txt", attachmentText: "contenido del archivo"
+        )
+        #expect(message.promptText == "Archivo adjunto: notas.txt\n\ncontenido del archivo\n\n---\n\nResúmelo")
+    }
+
+    @Test func promptTextIsJustTheContentWithNoAttachment() {
+        let message = ChatMessage(role: .user, content: "Hola")
+        #expect(message.promptText == "Hola")
+    }
+}
+
 struct ModelLoadStatusFormatterTests {
     @Test func reportsProgressWithoutAnEstimatedTimeLeft() {
         let status = ModelLoadStatus(
