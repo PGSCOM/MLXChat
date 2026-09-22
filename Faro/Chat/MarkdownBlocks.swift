@@ -15,6 +15,15 @@ struct MarkdownBlock: Identifiable, Equatable {
         case leading, center, trailing
     }
 
+    /// A table cell is either prose or, when its *entire* trimmed content
+    /// is one wrapped LaTeX expression (`$x^2$`, `\(x^2\)`…), a real
+    /// equation — the same whole-cell rule `displayEquation` applies to a
+    /// whole paragraph, just scoped to one cell instead of one line.
+    enum TableCell: Equatable {
+        case text(AttributedString)
+        case equation(String)
+    }
+
     enum Kind: Equatable {
         case paragraph
         case heading(level: Int)
@@ -32,7 +41,7 @@ struct MarkdownBlock: Identifiable, Equatable {
         /// True inline math mid-sentence isn't split out: `Text` can't
         /// host an arbitrary math view, so it's left as literal text.
         case equation(String)
-        case table(header: [AttributedString], alignment: [ColumnAlignment], rows: [[AttributedString]])
+        case table(header: [TableCell], alignment: [ColumnAlignment], rows: [[TableCell]])
     }
 
     let id: Int
@@ -184,45 +193,58 @@ struct MarkdownBlock: Identifiable, Equatable {
     private static func displayEquation(at index: Int, in lines: [String]) -> EquationMatch? {
         let trimmedLine = lines[index].trimmingCharacters(in: .whitespaces)
 
-        for (open, close) in fenceDelimiters where trimmedLine.hasPrefix(open) {
-            if trimmedLine.count > open.count + close.count, trimmedLine.hasSuffix(close) {
-                let inner = trimmedLine.dropFirst(open.count).dropLast(close.count)
-                    .trimmingCharacters(in: .whitespaces)
-                if !inner.isEmpty { return EquationMatch(latex: inner, nextIndex: index + 1) }
-            }
-            if trimmedLine == open {
-                var body: [String] = []
-                var cursor = index + 1
-                while cursor < lines.count {
-                    if lines[cursor].trimmingCharacters(in: .whitespaces) == close {
-                        let latex = body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-                        return latex.isEmpty ? nil : EquationMatch(latex: latex, nextIndex: cursor + 1)
-                    }
-                    body.append(lines[cursor])
-                    cursor += 1
-                }
-                return nil // unterminated fence — leave the opener as plain text
-            }
+        if let latex = wholeStringEquation(trimmedLine) {
+            return EquationMatch(latex: latex, nextIndex: index + 1)
         }
 
+        // The multi-line fence form ($$ / \[ alone on a line, content
+        // follows, a matching close line ends it) only makes sense scanning
+        // a line array, so it stays here rather than in the shared helper.
+        for (open, close) in fenceDelimiters where trimmedLine == open {
+            var body: [String] = []
+            var cursor = index + 1
+            while cursor < lines.count {
+                if lines[cursor].trimmingCharacters(in: .whitespaces) == close {
+                    let latex = body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                    return latex.isEmpty ? nil : EquationMatch(latex: latex, nextIndex: cursor + 1)
+                }
+                body.append(lines[cursor])
+                cursor += 1
+            }
+            return nil // unterminated fence — leave the opener as plain text
+        }
+
+        return nil
+    }
+
+    /// A trimmed string that is *entirely* one wrapped LaTeX expression —
+    /// the single-line match shared by `displayEquation` (a whole line or
+    /// paragraph) and a GFM table cell (which can't span lines at all).
+    private static func wholeStringEquation(_ trimmed: String) -> String? {
+        for (open, close) in fenceDelimiters {
+            guard trimmed.hasPrefix(open), trimmed.hasSuffix(close),
+                  trimmed.count > open.count + close.count else { continue }
+            let inner = trimmed.dropFirst(open.count).dropLast(close.count)
+                .trimmingCharacters(in: .whitespaces)
+            if !inner.isEmpty { return inner }
+        }
         for (open, close) in inlineOnlyDelimiters {
-            guard trimmedLine.hasPrefix(open), trimmedLine.hasSuffix(close),
-                  trimmedLine.count > open.count + close.count else { continue }
-            let inner = trimmedLine.dropFirst(open.count).dropLast(close.count)
+            guard trimmed.hasPrefix(open), trimmed.hasSuffix(close),
+                  trimmed.count > open.count + close.count else { continue }
+            let inner = trimmed.dropFirst(open.count).dropLast(close.count)
                 .trimmingCharacters(in: .whitespaces)
             guard !inner.isEmpty, !inner.contains(open) else { continue }
-            return EquationMatch(latex: inner, nextIndex: index + 1)
+            return inner
         }
-
         return nil
     }
 
     // MARK: - GFM tables
 
     private struct TableMatch {
-        let header: [AttributedString]
+        let header: [TableCell]
         let alignment: [ColumnAlignment]
-        let rows: [[AttributedString]]
+        let rows: [[TableCell]]
         let nextIndex: Int
     }
 
@@ -249,11 +271,16 @@ struct MarkdownBlock: Identifiable, Equatable {
         }
 
         return TableMatch(
-            header: headerCells.map(inlineAttributed),
+            header: headerCells.map(tableCell),
             alignment: alignment,
-            rows: rows.map { $0.map(inlineAttributed) },
+            rows: rows.map { $0.map(tableCell) },
             nextIndex: cursor
         )
+    }
+
+    private static func tableCell(_ text: String) -> TableCell {
+        if let latex = wholeStringEquation(text) { return .equation(latex) }
+        return .text(inlineAttributed(text))
     }
 
     /// The row of `---`/`:--`/`--:`/`:-:` cells right under a table header,

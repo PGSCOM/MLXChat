@@ -122,11 +122,14 @@ private struct CodeBlockView: View {
 }
 
 /// A GFM table rendered with SwiftUI's native `Grid`, scrollable
-/// horizontally so a wide table never gets clipped on a phone.
+/// horizontally so a wide table never gets clipped on a phone. A cell
+/// that's entirely one LaTeX expression renders as real math — each cell
+/// is its own `View` slot in the grid, not text flowing in a paragraph,
+/// so it doesn't hit the "`Text` can't host a view" wall inline math does.
 private struct TableBlockView: View {
-    let header: [AttributedString]
+    let header: [MarkdownBlock.TableCell]
     let alignment: [MarkdownBlock.ColumnAlignment]
-    let rows: [[AttributedString]]
+    let rows: [[MarkdownBlock.TableCell]]
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -151,10 +154,16 @@ private struct TableBlockView: View {
         .faroCard()
     }
 
-    private func cell(_ text: AttributedString, column: Int) -> some View {
-        Text(text)
-            .foregroundStyle(FaroColor.bone)
-            .gridColumnAlignment(alignment[column].horizontalAlignment)
+    @ViewBuilder private func cell(_ value: MarkdownBlock.TableCell, column: Int) -> some View {
+        switch value {
+        case .text(let text):
+            Text(text)
+                .foregroundStyle(FaroColor.bone)
+                .gridColumnAlignment(alignment[column].horizontalAlignment)
+        case .equation(let latex):
+            MathView(latex: latex, fontSize: 14)
+                .gridColumnAlignment(alignment[column].horizontalAlignment)
+        }
     }
 }
 

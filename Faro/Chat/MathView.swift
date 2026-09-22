@@ -14,12 +14,13 @@ import SwiftMath
 /// blank view, so a malformed equation is never silently empty.
 struct MathView: UIViewRepresentable {
     let latex: String
+    var fontSize: CGFloat = 18
 
     func makeUIView(context: Context) -> MTMathUILabel {
         let label = MTMathUILabel()
         label.labelMode = .display
         label.textAlignment = .left
-        label.fontSize = 18
+        label.fontSize = fontSize
         label.textColor = UIColor(FaroColor.bone)
         label.backgroundColor = .clear
         return label
@@ -27,5 +28,6 @@ struct MathView: UIViewRepresentable {
 
     func updateUIView(_ view: MTMathUILabel, context: Context) {
         view.latex = latex
+        view.fontSize = fontSize
     }
 }

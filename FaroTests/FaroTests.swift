@@ -329,6 +329,11 @@ struct MarkdownBlockTests {
         #expect(kinds(blocks) == [.paragraph])
     }
 
+    private func plainText(_ cell: MarkdownBlock.TableCell) -> String? {
+        if case .text(let attr) = cell { return String(attr.characters) }
+        return nil
+    }
+
     @Test func parsesAGfmTableWithAlignment() {
         let blocks = MarkdownBlock.blocks(of: "| A | B |\n| --- | ---: |\n| 1 | 2 |")
         #expect(blocks.count == 1)
@@ -336,9 +341,19 @@ struct MarkdownBlockTests {
             Issue.record("se esperaba un bloque de tabla")
             return
         }
-        #expect(header.map { String($0.characters) } == ["A", "B"])
+        #expect(header.map(plainText) == ["A", "B"])
         #expect(alignment == [.leading, .trailing])
-        #expect(rows.map { row in row.map { String($0.characters) } } == [["1", "2"]])
+        #expect(rows.map { row in row.map(plainText) } == [["1", "2"]])
+    }
+
+    @Test func rendersAWholeCellEquationInATable() {
+        let blocks = MarkdownBlock.blocks(of: "| A | B |\n| --- | --- |\n| $x^2$ | normal |")
+        guard case .table(_, _, let rows) = blocks[0].kind, let row = rows.first else {
+            Issue.record("se esperaba una fila de tabla")
+            return
+        }
+        #expect(row[0] == .equation("x^2"))
+        #expect(plainText(row[1]) == "normal")
     }
 
     @Test func doesNotTreatATableInsideACodeFenceAsARealTable() {
