@@ -92,6 +92,10 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.faro.ios
         GENERATE_INFOPLIST_FILE: NO
+        # No app icon set is shipped yet — without this, actool fails
+        # trying to resolve Xcode's default "AppIcon" name against our
+        # Assets.xcassets, which only holds the empty-state illustration.
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
     scheme:
       testTargets:
         - FaroTests
