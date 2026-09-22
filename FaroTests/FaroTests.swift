@@ -294,8 +294,13 @@ struct MarkdownBlockTests {
 
     @Test func marksAFencedCodeBlock() {
         let blocks = MarkdownBlock.blocks(of: "```\nlet x = 1\n```")
-        #expect(kinds(blocks) == [.code])
+        #expect(kinds(blocks) == [.code(language: nil)])
         #expect(strings(blocks) == ["let x = 1"])
+    }
+
+    @Test func capturesTheFencesLanguageHint() {
+        let blocks = MarkdownBlock.blocks(of: "```swift\nlet x = 1\n```")
+        #expect(kinds(blocks) == [.code(language: "swift")])
     }
 
     @Test func plainTextStaysOneUntouchedParagraph() {
@@ -338,6 +343,17 @@ struct MarkdownBlockTests {
 
     @Test func doesNotTreatATableInsideACodeFenceAsARealTable() {
         let blocks = MarkdownBlock.blocks(of: "```\n| a | b |\n| - | - |\n```")
-        #expect(kinds(blocks) == [.code])
+        #expect(kinds(blocks) == [.code(language: nil)])
+    }
+}
+
+/// The regression that matters for a highlighter: it must recolor code,
+/// never rewrite it — a broken HTML-entity decode or a dropped character
+/// would silently corrupt what the copy button then puts on the pasteboard.
+struct CodeHighlighterTests {
+    @Test func highlightingPreservesTheOriginalCodeText() {
+        let code = "let x = 1 // a comment with <html> & \"quotes\""
+        let result = CodeHighlighter.highlight(code, language: "swift")
+        #expect(result.map { String($0.characters) } == code)
     }
 }

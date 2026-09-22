@@ -21,7 +21,10 @@ struct MarkdownBlock: Identifiable, Equatable {
         /// `marker` is `"•"` for an unordered item, `"3."` for an ordered
         /// one; `depth` is how many nested lists it sits inside (1 = top).
         case listItem(marker: String, depth: Int)
-        case code
+        /// `language` is the fence's own hint (```` ```swift ````), passed
+        /// straight to `CodeHighlighter` — `nil` for a bare fence, which
+        /// falls back to its auto-detection.
+        case code(language: String?)
         case quote
         case rule
         /// A display equation (`$$...$$`, `\[...\]`, or a whole line/
@@ -135,7 +138,7 @@ struct MarkdownBlock: Identifiable, Equatable {
             case .orderedList: listDepth += 1
             case .unorderedList: listDepth += 1; isUnordered = true
             case .listItem(let itemOrdinal): ordinal = itemOrdinal
-            case .codeBlock: return .code
+            case .codeBlock(let languageHint): return .code(language: languageHint)
             case .blockQuote: return .quote
             case .thematicBreak: return .rule
             default: break

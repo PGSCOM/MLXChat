@@ -45,8 +45,8 @@ private struct BlockView: View {
                 Text(block.text)
             }
             .padding(.leading, CGFloat(depth - 1) * 14)
-        case .code:
-            CodeBlockView(text: block.text)
+        case .code(let language):
+            CodeBlockView(text: block.text, language: language)
         case .quote:
             HStack(alignment: .top, spacing: 10) {
                 Capsule().fill(FaroColor.edge).frame(width: 2)
@@ -75,11 +75,14 @@ private struct BlockView: View {
     }
 }
 
-/// A code block with a copy affordance: a bare icon (no tile behind it)
-/// that swaps to a checkmark for a beat after a tap instead of bouncing
-/// or glowing. Same header-row-above-content shape as `ReasoningCard`.
+/// A code block, syntax-colored by `CodeHighlighter` (falling back to
+/// plain monospace if that fails), with a copy affordance: a bare icon
+/// (no tile behind it) that swaps to a checkmark for a beat after a tap
+/// instead of bouncing or glowing. Same header-row-above-content shape as
+/// `ReasoningCard`.
 private struct CodeBlockView: View {
     let text: AttributedString
+    let language: String?
     @State private var copied = false
 
     var body: some View {
@@ -94,7 +97,7 @@ private struct CodeBlockView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Copiar código")
             }
-            Text(text)
+            Text(highlighted ?? text)
                 .font(.system(.footnote, design: .monospaced))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -102,6 +105,10 @@ private struct CodeBlockView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .faroCard()
+    }
+
+    private var highlighted: AttributedString? {
+        CodeHighlighter.highlight(String(text.characters), language: language)
     }
 
     private func copy() {
