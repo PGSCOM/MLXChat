@@ -12,9 +12,14 @@ struct ThinkTagSplitter {
 
     private var buffer = ""
     private var insideThink = false
-    /// Whether a real `<think>` has arrived. Until one does, a bare
-    /// `</think>` means the chat template opened the block inside the
-    /// prompt (Qwen3 and kin) and everything so far was reasoning.
+    /// Whether a real `<think>` has arrived *for the block currently being
+    /// awaited*. Until one does, a bare `</think>` means the chat template
+    /// opened the block inside the prompt (Qwen3 and kin) and everything
+    /// since the last block closed was reasoning. Reset after every block
+    /// closes — not just once — because a tool-calling turn can hand the
+    /// model back control after a call, and a template that pre-opens
+    /// `<think>` does so for *that* generation prompt too, not only the
+    /// first one.
     private var hasSeenOpenTag = false
     private var emittedContentBeforeAnyTag = false
 
@@ -53,16 +58,17 @@ struct ThinkTagSplitter {
                 hasSeenOpenTag = true
                 delta.content += piece
             } else {
-                if !insideThink && !hasSeenOpenTag {
+                if !insideThink && !hasSeenOpenTag && emittedContentBeforeAnyTag {
                     // Implicitly opened block: reclaim what already went out.
-                    hasSeenOpenTag = true
-                    if emittedContentBeforeAnyTag {
-                        delta.contentWasReasoning = true
-                        delta.reasoning = delta.content + delta.reasoning
-                        delta.content = ""
-                    }
+                    delta.contentWasReasoning = true
+                    delta.reasoning = delta.content + delta.reasoning
+                    delta.content = ""
                 }
                 delta.reasoning += piece
+                // This block is done — the *next* one starts fresh and may
+                // just as well be implicitly opened again.
+                hasSeenOpenTag = false
+                emittedContentBeforeAnyTag = false
             }
 
             buffer.removeSubrange(buffer.startIndex..<range.upperBound)

@@ -100,6 +100,20 @@ struct ThinkTagSplitterTests {
         #expect(delta.content == "respuesta")
         #expect(!delta.contentWasReasoning)
     }
+
+    /// A reasoning model that calls a tool mid-turn: `InferenceEngine`
+    /// resolves the call inside `ChatSession` and only streams the clean
+    /// continuation onward, but if that continuation's chat template also
+    /// pre-opens `<think>` (as Qwen3-style templates do for every
+    /// generation prompt, not just the first), the model's second segment
+    /// arrives with no literal `<think>` either — same shape as the very
+    /// first implicit block, split across chunks the way real streaming
+    /// does it.
+    @Test func recoversASecondImplicitlyOpenedBlockAfterATheoreticalToolCall() {
+        let result = run(["primero</think>", "lue", "go</think>final"])
+        #expect(result.reasoning == "primeroluego")
+        #expect(result.content == "final")
+    }
 }
 
 /// The `<think>` the chat template leaves open in the prompt itself —

@@ -8,6 +8,7 @@ struct ChatView: View {
     /// Models that can be switched to without a download. Read once off
     /// the main actor — `body` re-runs on every token and this touches disk.
     @State private var quickModelIDs: [String] = []
+    @State private var dismissedCapabilityNote = false
     private let downloadCoordinator = ModelDownloadCoordinator.shared
 
     var body: some View {
@@ -25,6 +26,9 @@ struct ChatView: View {
                 VStack(spacing: 8) {
                     if let status = downloadCoordinator.status[viewModel.conversation.modelID] {
                         ModelLoadBand(modelName: shortModelName, status: status)
+                    }
+                    if let note = knownCapabilityGap, !dismissedCapabilityNote {
+                        CapabilityNoteBand(message: note) { dismissedCapabilityNote = true }
                     }
                     if let error = viewModel.errorMessage {
                         ErrorBand(message: error) { viewModel.errorMessage = nil }
@@ -66,6 +70,9 @@ struct ChatView: View {
         // Also re-reads when the browser closes, so a model downloaded
         // just now shows up in the quick list.
         .task(id: showModelBrowser) { await refreshQuickModels() }
+        // A note dismissed for one model shouldn't stay hidden after
+        // switching to a different one.
+        .onChange(of: viewModel.conversation.modelID) { dismissedCapabilityNote = false }
         .sheet(isPresented: $showModelBrowser) {
             ModelBrowserView(
                 currentModelID: viewModel.conversation.modelID,
@@ -164,6 +171,20 @@ struct ChatView: View {
 
     private var shortModelName: String { Self.shortName(viewModel.conversation.modelID) }
 
+    /// A heads-up for one confirmed, common gap — not a capability
+    /// registry. `ThinkingEffort` is a text hint only Qwen3/gpt-oss-style
+    /// templates recognize (Gemma's chat template has no `<think>`
+    /// convention at all, so no setting here can make it reason), and
+    /// mlx-swift-lm's `ToolCallFormat.infer` doesn't recognize gemma model
+    /// ids yet (upstream: ml-explore/mlx-swift-lm#259), so tool-call syntax
+    /// the model emits streams through as plain text instead of being
+    /// dispatched. ponytail: a substring check, deliberately not a general
+    /// catalog — the app supports any Hugging Face repo on purpose.
+    private var knownCapabilityGap: String? {
+        guard viewModel.conversation.modelID.lowercased().contains("gemma") else { return nil }
+        return "Gemma no sigue el ajuste de Razonamiento ni llama a herramientas en Faro: son límites del modelo y del motor, no algo que puedas activar aquí."
+    }
+
     private static func shortName(_ modelID: String) -> String {
         if modelID == AppleFoundationModel.id { return AppleFoundationModel.displayName }
         return modelID.split(separator: "/").last.map(String.init) ?? modelID
@@ -198,6 +219,34 @@ struct ChatView: View {
                 }
                 ProgressView(value: status.fraction)
                     .tint(FaroColor.lamp)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .faroCard()
+        }
+    }
+
+    /// Same shape as `ErrorBand` but tonal instead of red — this isn't a
+    /// failure, it's a heads-up about what a model can't do here.
+    private struct CapabilityNoteBand: View {
+        let message: String
+        let onDismiss: () -> Void
+
+        var body: some View {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(FaroColor.lamp)
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(FaroColor.ash)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(FaroColor.ash)
+                }
+                .accessibilityLabel("Descartar el aviso")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
