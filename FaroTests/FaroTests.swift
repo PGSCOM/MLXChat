@@ -227,7 +227,10 @@ struct ArtifactParserTests {
         let content = "antes\n```swift\n\(body)\n```\ndespués"
         let segments = ArtifactParser.segments(content)
         #expect(segments.count == 3)
-        guard case .artifact(let artifact) = segments[1] else { return Issue.record("expected artifact") }
+        guard case .artifact(let artifact) = segments[1] else {
+            Issue.record("expected artifact")
+            return
+        }
         #expect(artifact.language == "swift")
         #expect(artifact.content == body)
     }
@@ -236,7 +239,10 @@ struct ArtifactParserTests {
         let content = "```html\n<p>hola</p>\n```"
         let segments = ArtifactParser.segments(content)
         #expect(segments.count == 1)
-        guard case .artifact(let artifact) = segments.first else { return Issue.record("expected artifact") }
+        guard case .artifact(let artifact) = segments.first else {
+            Issue.record("expected artifact")
+            return
+        }
         #expect(artifact.isPreviewable)
         #expect(artifact.fileExtension == "html")
     }
@@ -251,7 +257,10 @@ struct ArtifactParserTests {
     @Test func titleComesFromTheInfoStringWhenPresent() {
         let content = "```swift Ordenar.swift\n" + (1...9).map(String.init).joined(separator: "\n") + "\n```"
         let segments = ArtifactParser.segments(content)
-        guard case .artifact(let artifact) = segments.first else { return Issue.record("expected artifact") }
+        guard case .artifact(let artifact) = segments.first else {
+            Issue.record("expected artifact")
+            return
+        }
         #expect(artifact.title == "Ordenar.swift")
     }
 
