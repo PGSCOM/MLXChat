@@ -165,33 +165,35 @@ final class ChatViewModel {
     }
 
     /// Adds a new reply under `assistantMessage`'s same user turn, as a
-    /// sibling — the original reply is kept, not overwritten. Passing
-    /// `modelID` switches the conversation to that model first, so the new
-    /// reply's footer can say which model wrote it.
+    /// sibling — the original reply is kept, not overwritten, and stays
+    /// reachable through the branch switcher. Passing `modelID` tries that
+    /// model for this one branch only — it does *not* change what the
+    /// conversation goes on to use, so switching back to an earlier branch
+    /// still continues with whatever model answered it.
     func regenerate(_ assistantMessage: ChatMessage, with modelID: String? = nil) {
         guard !isGenerating, assistantMessage.role == .assistant,
               let parentID = assistantMessage.parentID,
               let userMessage = conversation.messages.first(where: { $0.id == parentID })
         else { return }
 
-        if let modelID, modelID != conversation.modelID {
-            conversation.modelID = modelID
-            AppSettings.lastModelID = modelID
-            try? modelContext.save()
-        }
         errorMessage = nil
-        startTurn(user: userMessage, history: history(before: userMessage.parentID), freshSession: true)
+        startTurn(user: userMessage, history: history(before: userMessage.parentID), modelID: modelID, freshSession: true)
     }
 
     /// Everything shared between a plain send and a regenerate: creates
     /// the assistant placeholder as a child of `user`, points the active
-    /// branch at it, and streams the reply in. `freshSession` forces the
-    /// live `ChatSession` to be rebuilt first — required whenever `history`
-    /// doesn't match what the session already has (editing, regenerating,
-    /// switching branches), not just appended to.
-    private func startTurn(user: ChatMessage, history: [HistoryTurn], freshSession: Bool) {
+    /// branch at it, and streams the reply in. `modelID` overrides the
+    /// conversation's own model for just this turn (a "relanzar con otro
+    /// modelo" branch); omitted, it uses whatever the conversation is
+    /// already set to. `freshSession` forces the live `ChatSession` to be
+    /// rebuilt first — required whenever `history` doesn't match what the
+    /// session already has (editing, regenerating, switching branches),
+    /// not just appended to.
+    private func startTurn(user: ChatMessage, history: [HistoryTurn], modelID overrideModelID: String? = nil, freshSession: Bool) {
+        let modelID = overrideModelID ?? conversation.modelID
+
         let assistantMessage = ChatMessage(role: .assistant, content: "", parentID: user.id)
-        assistantMessage.modelID = conversation.modelID
+        assistantMessage.modelID = modelID
         assistantMessage.conversation = conversation
         modelContext.insert(assistantMessage)
         conversation.messages.append(assistantMessage)
@@ -202,7 +204,6 @@ final class ChatViewModel {
         streamingMessageID = assistantMessage.id
 
         let conversationID = conversation.id
-        let modelID = conversation.modelID
         let effort = conversation.thinkingEffort
         // The hint text goes to the model only — the saved/shown user
         // message stays clean.
