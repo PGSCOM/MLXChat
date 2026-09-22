@@ -13,7 +13,7 @@ struct RootView: View {
                 conversations: conversations,
                 projects: projects,
                 selection: $selectedID,
-                onNew: { createConversation(in: nil) },
+                onNew: createConversation,
                 onDelete: delete,
                 onDeleteProject: deleteProject
             )
