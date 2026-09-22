@@ -23,7 +23,7 @@ struct MessageView: View {
             VStack(alignment: .leading, spacing: 10) {
                 reasoning
                 if !message.content.isEmpty {
-                    MarkdownText(content: message.content, parsed: liveTurn == nil)
+                    MarkdownText(content: message.content)
                         .foregroundStyle(FaroColor.bone)
                 }
                 if let liveTurn, showsStatusLine(liveTurn) {

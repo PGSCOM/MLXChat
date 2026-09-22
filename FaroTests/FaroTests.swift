@@ -258,3 +258,49 @@ struct ProjectContextTests {
         #expect(conversation.effectiveSystemPrompt == "Sé breve.")
     }
 }
+
+/// The regression from issue #5: `AttributedString(markdown:)` parses
+/// headings and paragraphs into `presentationIntent`, but rendering the
+/// whole document in one `Text` drops that structure — a heading and the
+/// paragraph after it collapsed into one run-on block with no separator.
+struct MarkdownBlockTests {
+    private func kinds(_ blocks: [MarkdownBlock]) -> [MarkdownBlock.Kind] {
+        blocks.map(\.kind)
+    }
+
+    private func strings(_ blocks: [MarkdownBlock]) -> [String] {
+        blocks.map { String($0.text.characters) }
+    }
+
+    @Test func splitsAHeadingFromTheParagraphAfterIt() {
+        let blocks = MarkdownBlock.blocks(of: "# Título\n\nHola")
+        #expect(kinds(blocks) == [.heading(level: 1), .paragraph])
+        #expect(strings(blocks) == ["Título", "Hola"])
+    }
+
+    @Test func keepsConsecutiveParagraphsSeparate() {
+        let blocks = MarkdownBlock.blocks(of: "Uno\n\nDos")
+        #expect(kinds(blocks) == [.paragraph, .paragraph])
+        #expect(strings(blocks) == ["Uno", "Dos"])
+    }
+
+    @Test func marksOrderedAndUnorderedListItems() {
+        let ordered = MarkdownBlock.blocks(of: "1. Primero\n2. Segundo")
+        #expect(kinds(ordered) == [.listItem(marker: "1.", depth: 1), .listItem(marker: "2.", depth: 1)])
+
+        let unordered = MarkdownBlock.blocks(of: "- Uno\n- Dos")
+        #expect(kinds(unordered) == [.listItem(marker: "•", depth: 1), .listItem(marker: "•", depth: 1)])
+    }
+
+    @Test func marksAFencedCodeBlock() {
+        let blocks = MarkdownBlock.blocks(of: "```\nlet x = 1\n```")
+        #expect(kinds(blocks) == [.code])
+        #expect(strings(blocks) == ["let x = 1"])
+    }
+
+    @Test func plainTextStaysOneUntouchedParagraph() {
+        let blocks = MarkdownBlock.blocks(of: "sin formato")
+        #expect(kinds(blocks) == [.paragraph])
+        #expect(strings(blocks) == ["sin formato"])
+    }
+}
