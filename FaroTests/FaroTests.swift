@@ -474,3 +474,37 @@ struct ProjectContextTests {
         #expect(conversation.effectiveSystemPrompt == "Sé breve.")
     }
 }
+
+/// Pure composition logic only — `ModelPreflight.check` itself needs the
+/// network, so it isn't covered here.
+struct PreflightResultTests {
+    @Test func noWarningsWhenEverythingChecksOut() {
+        var result = PreflightResult()
+        result.hasConfig = true
+        result.hasWeights = true
+        result.hasTokenizer = true
+        result.supportsTools = true
+        result.supportsReasoning = true
+        #expect(result.softWarnings.isEmpty)
+    }
+
+    @Test func unknownCapabilityIsNotAWarning() {
+        // A failed probe fetch (nil) must not read as "confirmed unsupported".
+        var result = PreflightResult()
+        result.hasConfig = true
+        result.hasWeights = true
+        result.hasTokenizer = true
+        #expect(result.softWarnings.isEmpty)
+    }
+
+    @Test func flagsEachConfirmedGapSeparately() {
+        var result = PreflightResult()
+        result.hasConfig = true
+        result.hasWeights = true
+        result.hasTokenizer = true
+        result.fitsRecommendedMemory = false
+        result.supportsTools = false
+        result.supportsReasoning = false
+        #expect(result.softWarnings.count == 3)
+    }
+}

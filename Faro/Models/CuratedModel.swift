@@ -41,5 +41,19 @@ struct CuratedModel: Identifiable, Sendable {
             displayName: "Qwen 3 VL · 4B", approxSizeGB: 2.4,
             isVision: true, isRecommended: false
         ),
+        // Both confirmed (chat-template source, not guessed) to combine
+        // reasoning and tool-calling reliably: safe tool-calling templates,
+        // and their `<think>` handling is exactly what `ThinkTagSplitter`
+        // and `InferenceEngine.ModelCapabilities` are built to detect.
+        CuratedModel(
+            id: "mlx-community/Qwen3-1.7B-4bit",
+            displayName: "Qwen 3 · 1.7B", approxSizeGB: 1.0,
+            isVision: false, isRecommended: true
+        ),
+        CuratedModel(
+            id: "mlx-community/Qwen3-4B-Thinking-2507-4bit",
+            displayName: "Qwen 3 Thinking · 4B", approxSizeGB: 2.3,
+            isVision: false, isRecommended: true
+        ),
     ]
 }

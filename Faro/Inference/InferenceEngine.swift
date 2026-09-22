@@ -32,6 +32,18 @@ struct HistoryTurn: Sendable {
 actor InferenceEngine {
     static let shared = InferenceEngine()
 
+    struct ModelCapabilities: Sendable, Equatable {
+        /// From mlx-swift-lm's own `ToolCallFormat.infer(from:configData:)`,
+        /// resolved per architecture from the repo's real `config.json` —
+        /// not a name comparison on Faro's side.
+        let supportsTools: Bool
+        /// Faro's own signal: does the model's rendered chat template
+        /// mention `<think>` anywhere? mlx-swift-lm doesn't expose an
+        /// equivalent to `toolCallFormat` for reasoning at the version this
+        /// app is pinned to.
+        let supportsReasoning: Bool
+    }
+
     /// At most one model is kept resident: weights run to several GB and
     /// a phone has no room for a second set, so loading a new model drops
     /// the previous one instead of stacking them until iOS kills the app.
@@ -45,6 +57,13 @@ actor InferenceEngine {
     /// inside it and only ever emits the closing tag. Measured once per
     /// load by rendering the template, never guessed from the repo id.
     private var templateOpensThink: [String: Bool] = [:]
+    /// What a model can actually do, measured once per load — never guessed
+    /// from its repo id. `supportsTools` comes straight from mlx-swift-lm's
+    /// own `ToolCallFormat.infer`, resolved per architecture from the repo's
+    /// real `config.json` (see `loadCapabilities`); Faro doesn't compare
+    /// names. `supportsReasoning` is Faro's own signal, since mlx-swift-lm
+    /// doesn't expose an equivalent for reasoning at the pinned version.
+    private var capabilitiesByModelID: [String: ModelCapabilities] = [:]
     private var configuredMemoryLimit = false
     /// Where tool-call start/finish events for the turn in flight go, per
     /// conversation. A session (and its baked-in `toolDispatch` closure) is
@@ -87,7 +106,9 @@ actor InferenceEngine {
             progressHandler: progress
         )
         containers = [modelID: container]
-        templateOpensThink = [modelID: await Self.promptOpensThink(container)]
+        let (opensThink, caps) = await Self.loadCapabilities(container)
+        templateOpensThink = [modelID: opensThink]
+        capabilitiesByModelID = [modelID: caps]
         sessions = sessions.filter { $0.value.modelID == modelID }
         return container
     }
@@ -98,19 +119,50 @@ actor InferenceEngine {
     func evictContainer(modelID: String) {
         containers[modelID] = nil
         templateOpensThink[modelID] = nil
+        capabilitiesByModelID[modelID] = nil
         sessions = sessions.filter { $0.value.modelID != modelID }
     }
 
-    /// Renders the model's chat template for a throwaway turn and asks
-    /// whether the generation prompt it produces ends inside an open
-    /// `<think>`. Templates that pre-close it (`<think>\n\n</think>`, the
-    /// thinking-disabled path) correctly answer no.
-    private static func promptOpensThink(_ container: ModelContainer) async -> Bool {
-        let messages: [MLXLMCommon.Message] = [["role": "user", "content": "hola"]]
-        let prompt = try? await container.perform { (context: ModelContext) in
-            context.tokenizer.decode(tokenIds: try context.tokenizer.applyChatTemplate(messages: messages))
+    /// What this model can do, measured once at load. `nil` for a model
+    /// that hasn't loaded (yet) this process lifetime. The Apple Foundation
+    /// model never reaches `loadContainer` at all — it's an id Faro itself
+    /// reserves (`AppleFoundationModel.id`), not a community repo name being
+    /// guessed at, and neither capability is wired up for it (see
+    /// `streamResponse`), so it answers directly instead of reporting unknown.
+    func capabilities(for modelID: String) -> ModelCapabilities? {
+        guard !AppleFoundationModel.isAppleFoundation(modelID) else {
+            return ModelCapabilities(supportsTools: false, supportsReasoning: false)
         }
-        return prompt.map(Self.endsInsideThink) ?? false
+        return capabilitiesByModelID[modelID]
+    }
+
+    /// Renders the model's chat template for a throwaway turn and reads its
+    /// resolved `toolCallFormat` — one round trip into the container for
+    /// both. `opensThink` answers whether the generation prompt it produces
+    /// ends inside an open `<think>` (templates that pre-close it, the
+    /// thinking-disabled path, correctly answer no); `supportsReasoning`
+    /// also covers a template that documents `<think>` without pre-opening
+    /// it (the hybrid Qwen3 convention).
+    private static func loadCapabilities(
+        _ container: ModelContainer
+    ) async -> (opensThink: Bool, capabilities: ModelCapabilities) {
+        let messages: [MLXLMCommon.Message] = [["role": "user", "content": "hola"]]
+        let result = try? await container.perform { (context: ModelContext) -> (String, Bool) in
+            let prompt = context.tokenizer.decode(
+                tokenIds: try context.tokenizer.applyChatTemplate(messages: messages))
+            return (prompt, context.configuration.toolCallFormat != nil)
+        }
+        guard let (prompt, supportsTools) = result else {
+            return (false, ModelCapabilities(supportsTools: false, supportsReasoning: false))
+        }
+        let opensThink = Self.endsInsideThink(prompt)
+        return (
+            opensThink,
+            ModelCapabilities(
+                supportsTools: supportsTools,
+                supportsReasoning: opensThink || prompt.contains("<think>")
+            )
+        )
     }
 
     /// True when the last `<think>` in the text has no `</think>` after it.

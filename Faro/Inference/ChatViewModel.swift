@@ -24,6 +24,11 @@ final class ChatViewModel {
     private(set) var phaseStartedAt = Date()
     /// The assistant message being streamed right now, if any.
     private(set) var streamingMessageID: UUID?
+    /// What the current model can actually do — `nil` until the first turn
+    /// (or a re-check after switching models) has loaded it. Drives the UI
+    /// disabling controls that wouldn't do anything for this model, instead
+    /// of guessing from its repo id.
+    private(set) var capabilities: InferenceEngine.ModelCapabilities?
     var errorMessage: String?
     var draft = ""
     private(set) var pendingAttachment: ExtractedAttachment?
@@ -170,6 +175,7 @@ final class ChatViewModel {
                 // The model is in memory and the first token hasn't landed
                 // yet — that wait is thinking, not preparing.
                 enter(.thinking)
+                capabilities = await InferenceEngine.shared.capabilities(for: modelID)
                 for try await generation in stream {
                     switch generation {
                     case .chunk(let piece):
@@ -262,6 +268,12 @@ final class ChatViewModel {
         AppSettings.lastModelID = modelID
         try? modelContext.save()
         invalidateSession()
+        // Don't keep showing the previous model's capabilities for the
+        // instant before the new one has been checked; re-check right away
+        // in case it already loaded earlier this session (no reload needed —
+        // `InferenceEngine.capabilities(for:)` just reads its cache).
+        capabilities = nil
+        Task { capabilities = await InferenceEngine.shared.capabilities(for: modelID) }
     }
 
     /// Called when the generation-settings sheet is dismissed: the live

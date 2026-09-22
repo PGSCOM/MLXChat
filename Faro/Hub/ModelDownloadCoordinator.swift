@@ -25,9 +25,11 @@ final class ModelDownloadCoordinator {
 
     private(set) var status: [String: ModelLoadStatus] = [:]
     private(set) var errors: [String: String] = [:]
-    /// Preflight said the weights probably don't fit this device's
-    /// recommended working set. Not fatal — the recommendation is
-    /// conservative — so it's shown and the download continues.
+    /// Preflight's soft findings (`PreflightResult.softWarnings`) — memory
+    /// fit, tool-calling, reasoning. None of them are fatal (the memory
+    /// figure is conservative, the capability checks read a small probe
+    /// file rather than the model actually running), so this is shown
+    /// before the download and the download continues regardless.
     private(set) var warnings: [String: String] = [:]
 
     /// Last raw sample per model, to derive a smoothed transfer rate — a
@@ -48,7 +50,8 @@ final class ModelDownloadCoordinator {
                     status[id] = nil
                     return
                 }
-                if !preflight.fitsRecommendedMemory { warnings[id] = preflight.summary }
+                let combined = preflight.softWarnings.joined(separator: " · ")
+                if !combined.isEmpty { warnings[id] = combined.prefix(1).uppercased() + combined.dropFirst() }
                 _ = try await InferenceEngine.shared.loadContainer(modelID: id) { [weak self] value in
                     Task { @MainActor in self?.record(id: id, value: value) }
                 }
