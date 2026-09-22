@@ -11,6 +11,10 @@ struct ModelBrowserView: View {
     @State private var isSearching = false
     @State private var searchError: String?
     @State private var downloaded: [ModelCacheStore.DownloadedModel] = []
+    /// What each downloaded model can actually do, read straight off disk —
+    /// keyed alongside `downloaded` so a model that doesn't admit reasoning
+    /// or tools says so here too, not just before it's downloaded.
+    @State private var capabilities: [String: ModelCapabilityProbe.Capabilities] = [:]
     @State private var pendingDeletion: ModelCacheStore.DownloadedModel?
     @State private var pendingDeleteAll = false
     @State private var appleIsAvailable = false
@@ -45,6 +49,7 @@ struct ModelBrowserView: View {
                             title: displayName(for: model.id),
                             repoID: model.id,
                             sizeBytes: model.sizeBytes,
+                            warnings: capabilities[model.id]?.warnings ?? [],
                             isSelected: model.id == currentModelID,
                             onSelect: { select(model.id) },
                             onDelete: { pendingDeletion = model }
@@ -166,12 +171,20 @@ struct ModelBrowserView: View {
         downloaded.filter { $0.id != currentModelID }.reduce(0) { $0 + $1.sizeBytes }
     }
 
-    /// The cache listing walks every blob on disk to add up sizes, so it
-    /// runs off the main actor instead of on every redraw of this list.
+    /// The cache listing walks every blob on disk to add up sizes, and
+    /// reading each model's chat template can mean a ~1 MB file read, so
+    /// both run off the main actor instead of on every redraw of this list.
     private func refreshDownloaded() async {
-        downloaded = await Task.detached(priority: .utility) {
-            ModelCacheStore.downloadedModels()
+        let (models, caps) = await Task.detached(priority: .utility) {
+            let models = ModelCacheStore.downloadedModels()
+            var caps: [String: ModelCapabilityProbe.Capabilities] = [:]
+            for model in models {
+                caps[model.id] = ModelCapabilityProbe.onDisk(modelID: model.id)
+            }
+            return (models, caps)
         }.value
+        downloaded = models
+        capabilities = caps
     }
 
     private func runSearch() async {
@@ -203,6 +216,7 @@ struct ModelBrowserView: View {
     private func subtitle(for model: CuratedModel) -> String {
         var parts = [String(format: "%.1f GB", model.approxSizeGB)]
         if model.isVision { parts.append("Visión") }
+        if model.supportsReasoning { parts.append("Razona") }
         if model.isRecommended { parts.append("Recomendado") }
         return parts.joined(separator: " · ")
     }
@@ -232,6 +246,7 @@ private struct DownloadedModelRow: View {
     let title: String
     let repoID: String
     let sizeBytes: Int64
+    let warnings: [String]
     let isSelected: Bool
     let onSelect: () -> Void
     let onDelete: () -> Void
@@ -247,6 +262,11 @@ private struct DownloadedModelRow: View {
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundStyle(FaroColor.ash)
                         .lineLimit(1)
+                    if let capitalizedWarning {
+                        Text(capitalizedWarning)
+                            .font(.caption2)
+                            .foregroundStyle(FaroColor.lamp)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -277,6 +297,12 @@ private struct DownloadedModelRow: View {
         let size = sizeBytes.formatted(.byteCount(style: .memory))
         return title == repoID ? size : "\(size) · \(repoID)"
     }
+
+    private var capitalizedWarning: String? {
+        guard !warnings.isEmpty else { return nil }
+        let joined = warnings.joined(separator: " · ")
+        return joined.prefix(1).uppercased() + joined.dropFirst()
+    }
 }
 
 private struct ModelRow: View {
@@ -289,8 +315,11 @@ private struct ModelRow: View {
     let onSelect: () -> Void
 
     var body: some View {
-        Button(action: primaryAction) {
-            HStack(spacing: 12) {
+        // The trailing cancel button needs its own tap target, so the main
+        // content and `trailing` are siblings rather than one row-wide
+        // Button — same shape as `DownloadedModelRow`'s delete button.
+        HStack(spacing: 12) {
+            Button(action: primaryAction) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
                         .foregroundStyle(FaroColor.bone)
@@ -315,10 +344,10 @@ private struct ModelRow: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                trailing
             }
+            .buttonStyle(.plain)
+            trailing
         }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder private var trailing: some View {
@@ -327,9 +356,20 @@ private struct ModelRow: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(FaroColor.lamp)
         } else if let status = coordinator.status[id] {
-            ProgressView(value: status.fraction)
-                .frame(width: 56)
-                .tint(FaroColor.lamp)
+            HStack(spacing: 10) {
+                ProgressView(value: status.fraction)
+                    .frame(width: 56)
+                    .tint(FaroColor.lamp)
+                Button {
+                    coordinator.cancel(id: id)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(FaroColor.ash)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Cancelar descarga de \(title)")
+            }
         } else if isDownloaded {
             Text("Usar")
                 .font(.caption.weight(.medium))

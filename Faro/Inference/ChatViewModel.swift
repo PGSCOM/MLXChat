@@ -24,11 +24,12 @@ final class ChatViewModel {
     private(set) var phaseStartedAt = Date()
     /// The assistant message being streamed right now, if any.
     private(set) var streamingMessageID: UUID?
-    /// What the current model can actually do — `nil` until the first turn
-    /// (or a re-check after switching models) has loaded it. Drives the UI
-    /// disabling controls that wouldn't do anything for this model, instead
-    /// of guessing from its repo id.
-    private(set) var capabilities: InferenceEngine.ModelCapabilities?
+    /// What the current model can actually do — `nil` until its on-disk chat
+    /// template has been read (right away, at `init` and on every model
+    /// switch — no need to wait for the model to load, or even for a first
+    /// turn). Drives the UI disabling controls that wouldn't do anything for
+    /// this model, instead of guessing from its repo id.
+    private(set) var capabilities: ModelCapabilityProbe.Capabilities?
     var errorMessage: String?
     var draft = ""
     private(set) var pendingAttachment: ExtractedAttachment?
@@ -39,6 +40,7 @@ final class ChatViewModel {
     init(conversation: Conversation, modelContext: SwiftData.ModelContext) {
         self.conversation = conversation
         self.modelContext = modelContext
+        refreshCapabilities()
     }
 
     var isGenerating: Bool { phase != .idle }
@@ -175,7 +177,6 @@ final class ChatViewModel {
                 // The model is in memory and the first token hasn't landed
                 // yet — that wait is thinking, not preparing.
                 enter(.thinking)
-                capabilities = await InferenceEngine.shared.capabilities(for: modelID)
                 for try await generation in stream {
                     switch generation {
                     case .chunk(let piece):
@@ -268,12 +269,21 @@ final class ChatViewModel {
         AppSettings.lastModelID = modelID
         try? modelContext.save()
         invalidateSession()
-        // Don't keep showing the previous model's capabilities for the
-        // instant before the new one has been checked; re-check right away
-        // in case it already loaded earlier this session (no reload needed —
-        // `InferenceEngine.capabilities(for:)` just reads its cache).
+        refreshCapabilities()
+    }
+
+    /// Reads the new model's chat template off disk — not from the running
+    /// container, so this doesn't wait for a load. `nil` while in flight (and
+    /// for a model that was picked but never downloaded — there's nothing on
+    /// disk to read yet) rather than showing the previous model's answer.
+    private func refreshCapabilities() {
+        let modelID = conversation.modelID
         capabilities = nil
-        Task { capabilities = await InferenceEngine.shared.capabilities(for: modelID) }
+        Task {
+            capabilities = await Task.detached(priority: .utility) {
+                ModelCapabilityProbe.onDisk(modelID: modelID)
+            }.value
+        }
     }
 
     /// Called when the generation-settings sheet is dismissed: the live

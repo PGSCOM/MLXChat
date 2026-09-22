@@ -483,8 +483,7 @@ struct PreflightResultTests {
         result.hasConfig = true
         result.hasWeights = true
         result.hasTokenizer = true
-        result.supportsTools = true
-        result.supportsReasoning = true
+        result.capabilities = .init(supportsTools: true, supportsReasoning: true)
         #expect(result.softWarnings.isEmpty)
     }
 
@@ -503,8 +502,74 @@ struct PreflightResultTests {
         result.hasWeights = true
         result.hasTokenizer = true
         result.fitsRecommendedMemory = false
-        result.supportsTools = false
-        result.supportsReasoning = false
+        result.capabilities = .init(supportsTools: false, supportsReasoning: false)
         #expect(result.softWarnings.count == 3)
+    }
+}
+
+/// Fragments taken verbatim from real `mlx-community` chat templates —
+/// the exact three cases a naive `contains("<think>")` gets backwards (see
+/// the `ponytail:`-adjacent doc comments on `ModelCapabilityProbe`).
+struct ModelCapabilityProbeTests {
+    @Test func rejectsThinkInsideAHistoryRewriteConcatenation() {
+        // Qwen3-4B-Instruct-2507: doesn't reason, but its template mentions
+        // `<think>` only while stripping it back out of a prior turn.
+        let template = #"""
+            {%- if '</think>' in content %}
+                {%- set reasoning_content = content.split('</think>')[0].rstrip('\n').split('<think>')[-1].lstrip('\n') %}
+                {%- set content = content.split('</think>')[-1].lstrip('\n') %}
+            {%- endif %}
+            {{- '<|im_start|>' + message.role + '\n<think>\n' + reasoning_content.strip('\n') + '\n</think>\n\n' + content.lstrip('\n') }}
+            """#
+        #expect(ModelCapabilityProbe.supportsReasoning(chatTemplate: template) == false)
+    }
+
+    @Test func acceptsThinkEmittedAsALiteral() {
+        // Qwen3-4B-Thinking-2507: the generation prompt opens `<think>` for
+        // the model to write into.
+        let template = #"{%- if add_generation_prompt %}{{- '<|im_start|>assistant\n<think>\n' }}{%- endif %}"#
+        #expect(ModelCapabilityProbe.supportsReasoning(chatTemplate: template) == true)
+    }
+
+    @Test func acceptsEnableThinkingEvenWhenTheRenderInjectsNothing() {
+        // Qwen3-1.7B/8B: with thinking left on (the default), the hybrid
+        // template's rendered *prompt* injects nothing extra — a render-and-
+        // check misses this the same way `contains("<think>")` on the raw
+        // source does with thinking explicitly off.
+        let template = #"""
+            {%- if enable_thinking is defined and enable_thinking is false %}
+                {{- '<think>\n\n</think>\n\n' }}
+            {%- endif %}
+            """#
+        #expect(ModelCapabilityProbe.supportsReasoning(chatTemplate: template) == true)
+    }
+
+    @Test func neitherToolsNorThinkOnAPlainTemplate() {
+        // Gemma 3: no `tools`, no `<think>`, anywhere.
+        let template = "{%- for message in messages %}{{- message.content }}{%- endfor %}"
+        #expect(ModelCapabilityProbe.supportsTools(chatTemplate: template) == false)
+        #expect(ModelCapabilityProbe.supportsReasoning(chatTemplate: template) == false)
+    }
+
+    @Test func toolsWithoutReasoning() {
+        // Llama 3.2: calls tools, never reasons.
+        let template = "{%- if tools %}{{- 'Tools available' }}{%- endif %}"
+        #expect(ModelCapabilityProbe.supportsTools(chatTemplate: template) == true)
+        #expect(ModelCapabilityProbe.supportsReasoning(chatTemplate: template) == false)
+    }
+
+    @Test func chatTemplateReadsThePlainStringForm() {
+        let data = #"{"chat_template": "{{ messages }}"}"#.data(using: .utf8)!
+        #expect(ModelCapabilityProbe.chatTemplate(fromTokenizerConfigData: data) == "{{ messages }}")
+    }
+
+    @Test func chatTemplateJoinsTheMultiTemplateListForm() {
+        // Hugging Face's multi-template format: a list of named variants
+        // instead of one plain string.
+        let data = #"{"chat_template": [{"name": "default", "template": "{{ a }}"}, {"name": "tool_use", "template": "{{ b }}"}]}"#
+            .data(using: .utf8)!
+        let result = ModelCapabilityProbe.chatTemplate(fromTokenizerConfigData: data)
+        #expect(result?.contains("{{ a }}") == true)
+        #expect(result?.contains("{{ b }}") == true)
     }
 }
