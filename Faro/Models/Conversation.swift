@@ -17,6 +17,14 @@ final class Conversation {
         set { thinkingEffortRaw = newValue.rawValue }
     }
 
+    /// "" means "use the global style from `Personalization`".
+    var responseStyleRaw: String = ""
+
+    var responseStyle: ResponseStyle? {
+        get { ResponseStyle(rawValue: responseStyleRaw) }
+        set { responseStyleRaw = newValue?.rawValue ?? "" }
+    }
+
     // Generation settings. Recommended values are used unless
     // `useCustomGeneration` is on — see `effectiveGenerationSettings`.
     var useCustomGeneration: Bool = false

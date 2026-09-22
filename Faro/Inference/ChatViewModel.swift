@@ -111,10 +111,15 @@ final class ChatViewModel {
         let conversationID = conversation.id
         let modelID = conversation.modelID
         let effort = conversation.thinkingEffort
+        let style = conversation.responseStyle ?? Personalization.style
         // The hint text goes to the model only — the saved/shown user
         // message (`text`, already persisted above) stays clean.
-        let systemPrompt = [conversation.systemPrompt, effort.systemHint]
-            .filter { !$0.isEmpty }.joined(separator: "\n")
+        let systemPrompt = [
+            Personalization.preamble(style: style),
+            SkillStore.alwaysOnInstructions(),
+            conversation.systemPrompt,
+            effort.systemHint,
+        ].filter { !$0.isEmpty }.joined(separator: "\n\n")
         let promptForModel = text + effort.promptSuffix
         let settings = conversation.effectiveGenerationSettings
 
@@ -213,6 +218,13 @@ final class ChatViewModel {
     func setThinkingEffort(_ effort: ThinkingEffort) {
         guard effort != conversation.thinkingEffort else { return }
         conversation.thinkingEffort = effort
+        try? modelContext.save()
+        invalidateSession()
+    }
+
+    func setResponseStyle(_ style: ResponseStyle?) {
+        guard style != conversation.responseStyle else { return }
+        conversation.responseStyle = style
         try? modelContext.save()
         invalidateSession()
     }

@@ -23,8 +23,23 @@ struct MessageView: View {
             VStack(alignment: .leading, spacing: 10) {
                 reasoning
                 if !message.content.isEmpty {
-                    MarkdownText(content: message.content, parsed: liveTurn == nil)
-                        .foregroundStyle(FaroColor.bone)
+                    // Artifacts are only derived once the turn is done —
+                    // parsing mid-stream could turn a half-written fence
+                    // into a false positive.
+                    if liveTurn == nil {
+                        ForEach(ArtifactParser.segments(message.content)) { segment in
+                            switch segment {
+                            case .text(_, let text):
+                                MarkdownText(content: text)
+                                    .foregroundStyle(FaroColor.bone)
+                            case .artifact(let artifact):
+                                ArtifactCard(artifact: artifact)
+                            }
+                        }
+                    } else {
+                        MarkdownText(content: message.content, parsed: false)
+                            .foregroundStyle(FaroColor.bone)
+                    }
                 }
                 if let liveTurn, showsStatusLine(liveTurn) {
                     TurnStatusLine(turn: liveTurn)

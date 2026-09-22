@@ -35,11 +35,16 @@ struct AskFaroIntent: AppIntent {
         var answer = ""
         var splitter = ThinkTagSplitter()
 
+        // Siri is "the model talking to you" — apply the same profile the
+        // in-app chat does.
+        let preamble = Personalization.preamble(style: Personalization.style)
+        let effectiveSystemPrompt = [preamble, systemPrompt ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n")
+
         do {
             let stream = try await InferenceEngine.shared.streamResponse(
                 conversationID: requestID,
                 modelID: resolvedModel,
-                systemPrompt: systemPrompt ?? "",
+                systemPrompt: effectiveSystemPrompt,
                 history: [],
                 settings: .recommended,
                 prompt: prompt

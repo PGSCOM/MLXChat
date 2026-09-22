@@ -144,6 +144,8 @@ final class APIServer {
         }
 
         let modelID = (payload.model?.isEmpty == false) ? payload.model! : DefaultModel.repoID
+        // No `Personalization` preamble here on purpose: this is a raw
+        // OpenAI-compatible surface and the client sends its own `system`.
         let systemPrompt = payload.messages.first { $0.role == "system" }?.content.plainText ?? ""
         let history = payload.messages.dropLast()
             .filter { $0.role != "system" }

@@ -165,7 +165,8 @@ actor InferenceEngine {
             return existing.session
         }
         let container = try await loadContainer(modelID: modelID, progress: progress)
-        let tools = await MCPConnectionManager.shared.enabledToolSpecs()
+        let mcpTools = await MCPConnectionManager.shared.enabledToolSpecs()
+        let tools = SkillStore.toolSpecs() + mcpTools
 
         // Pulled out with explicit types: a ternary between `nil` and a
         // closure literal, inlined as a call argument, previously made
@@ -174,7 +175,12 @@ actor InferenceEngine {
         let dispatch: (@Sendable (ToolCall) async throws -> String)? = tools.isEmpty
             ? nil
             : { @Sendable (call: ToolCall) async throws -> String in
-                try await MCPConnectionManager.shared.dispatch(call)
+                // A skill call resolves right here — its "result" is its
+                // instructions, never sent over MCP.
+                if let instructions = SkillStore.instructions(forTool: call.function.name) {
+                    return instructions
+                }
+                return try await MCPConnectionManager.shared.dispatch(call)
             }
 
         let session = ChatSession(

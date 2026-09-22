@@ -105,6 +105,12 @@ struct ChatView: View {
                     Text(effort.label).tag(effort)
                 }
             }
+            Picker("Estilo", selection: responseStyleBinding) {
+                Text("Predeterminado").tag(ResponseStyle?.none)
+                ForEach(ResponseStyle.allCases, id: \.self) { style in
+                    Text(style.label).tag(ResponseStyle?.some(style))
+                }
+            }
             Button {
                 showSettings = true
             } label: {
@@ -146,6 +152,13 @@ struct ChatView: View {
         Binding(
             get: { viewModel.conversation.thinkingEffort },
             set: { viewModel.setThinkingEffort($0) }
+        )
+    }
+
+    private var responseStyleBinding: Binding<ResponseStyle?> {
+        Binding(
+            get: { viewModel.conversation.responseStyle },
+            set: { viewModel.setResponseStyle($0) }
         )
     }
 

@@ -213,3 +213,148 @@ struct ReasoningCardTests {
         #expect(ReasoningCard.elapsedLabel(since: start, at: start.addingTimeInterval(65)) == "1 min 5 s")
     }
 }
+
+struct ArtifactParserTests {
+    @Test func shortCodeBlockStaysInline() {
+        let content = "texto\n```swift\nlet x = 1\n```\nfin"
+        let segments = ArtifactParser.segments(content)
+        #expect(segments.count == 1)
+        if case .text(_, let text) = segments.first { #expect(text == content) } else { Issue.record("expected text") }
+    }
+
+    @Test func longCodeBlockIsPromoted() {
+        let body = (1...10).map { "línea \($0)" }.joined(separator: "\n")
+        let content = "antes\n```swift\n\(body)\n```\ndespués"
+        let segments = ArtifactParser.segments(content)
+        #expect(segments.count == 3)
+        guard case .artifact(let artifact) = segments[1] else { return Issue.record("expected artifact") }
+        #expect(artifact.language == "swift")
+        #expect(artifact.content == body)
+    }
+
+    @Test func htmlIsPromotedRegardlessOfLength() {
+        let content = "```html\n<p>hola</p>\n```"
+        let segments = ArtifactParser.segments(content)
+        #expect(segments.count == 1)
+        guard case .artifact(let artifact) = segments.first else { return Issue.record("expected artifact") }
+        #expect(artifact.isPreviewable)
+        #expect(artifact.fileExtension == "html")
+    }
+
+    @Test func unclosedFenceStaysAsText() {
+        let content = "algo\n```swift\nsin cerrar"
+        let segments = ArtifactParser.segments(content)
+        #expect(segments.count == 1)
+        if case .text(_, let text) = segments.first { #expect(text == content) } else { Issue.record("expected text") }
+    }
+
+    @Test func titleComesFromTheInfoStringWhenPresent() {
+        let content = "```swift Ordenar.swift\n" + (1...9).map(String.init).joined(separator: "\n") + "\n```"
+        let segments = ArtifactParser.segments(content)
+        guard case .artifact(let artifact) = segments.first else { return Issue.record("expected artifact") }
+        #expect(artifact.title == "Ordenar.swift")
+    }
+
+    @Test func reassemblingSegmentsReproducesTheOriginalContent() {
+        let body = (1...10).map { "línea \($0)" }.joined(separator: "\n")
+        let content = "intro\n\n```html\n\(body)\n```\n\ncierre"
+        let segments = ArtifactParser.segments(content)
+        let rebuilt = segments.map { segment -> String in
+            switch segment {
+            case .text(_, let text): return text
+            case .artifact(let artifact): return "```\(artifact.language)\n\(artifact.content)\n```"
+            }
+        }.joined(separator: "\n")
+        #expect(rebuilt == content)
+    }
+}
+
+// Serialized: every test in this suite reads and writes the same
+// `UserDefaults` key, and Swift Testing otherwise runs them concurrently.
+@Suite(.serialized)
+struct SkillStoreTests {
+    private func withCleanStore(_ body: () -> Void) {
+        let saved = SkillStore.all
+        SkillStore.all = []
+        defer { SkillStore.all = saved }
+        body()
+    }
+
+    @Test func toolNameIsSanitizedAndPrefixed() {
+        let skill = Skill(name: "Revisión de código!", summary: "", instructions: "")
+        #expect(skill.toolName == "skill_revisión_de_código_")
+    }
+
+    @Test func instructionsOnlyRouteAutomaticSkills() {
+        withCleanStore {
+            let automatic = Skill(name: "Auto", summary: "s", instructions: "haz A", mode: .automatic)
+            let always = Skill(name: "Always", summary: "s", instructions: "haz B", mode: .always)
+            SkillStore.all = [automatic, always]
+
+            #expect(SkillStore.instructions(forTool: automatic.toolName) == "haz A")
+            #expect(SkillStore.instructions(forTool: always.toolName) == nil)
+        }
+    }
+
+    @Test func alwaysOnAndToolSpecsPartitionByMode() {
+        withCleanStore {
+            let automatic = Skill(name: "Auto", summary: "s", instructions: "haz A", mode: .automatic)
+            let always = Skill(name: "Always", summary: "s", instructions: "haz B", mode: .always)
+            let off = Skill(name: "Off", summary: "s", instructions: "haz C", mode: .off)
+            SkillStore.all = [automatic, always, off]
+
+            #expect(SkillStore.alwaysOnInstructions() == "haz B")
+            #expect(SkillStore.toolSpecs().count == 1)
+        }
+    }
+
+    @Test func parsesFrontmatterFromASkillMarkdownFile() {
+        let text = """
+        ---
+        name: Revisión
+        description: Revisa código en busca de bugs
+        ---
+        Instrucciones aquí.
+        """
+        let skill = SkillStore.parse(skillMarkdown: text, fallbackName: "fallback")
+        #expect(skill.name == "Revisión")
+        #expect(skill.summary == "Revisa código en busca de bugs")
+        #expect(skill.instructions == "Instrucciones aquí.")
+    }
+
+    @Test func fallsBackToPlainTextWithoutFrontmatter() {
+        let skill = SkillStore.parse(skillMarkdown: "solo instrucciones", fallbackName: "Mi skill")
+        #expect(skill.name == "Mi skill")
+        #expect(skill.instructions == "solo instrucciones")
+    }
+}
+
+// Serialized: same reason as `SkillStoreTests` — shared `UserDefaults` state.
+@Suite(.serialized)
+struct PersonalizationTests {
+    @Test func emptyProfileAndNormalStyleProduceAnEmptyPreamble() {
+        let saved = (Personalization.name, Personalization.context, Personalization.preferences)
+        Personalization.name = ""
+        Personalization.context = ""
+        Personalization.preferences = ""
+        defer {
+            Personalization.name = saved.0
+            Personalization.context = saved.1
+            Personalization.preferences = saved.2
+        }
+        #expect(Personalization.preamble(style: .normal).isEmpty)
+    }
+
+    @Test func filledProfileProducesLines() {
+        let saved = (Personalization.name, Personalization.context, Personalization.preferences)
+        Personalization.name = "Ada"
+        Personalization.context = ""
+        Personalization.preferences = ""
+        defer {
+            Personalization.name = saved.0
+            Personalization.context = saved.1
+            Personalization.preferences = saved.2
+        }
+        #expect(Personalization.preamble(style: .conciso) == "El usuario se llama Ada.\nResponde de forma breve y directa, sin rodeos.")
+    }
+}
