@@ -1,15 +1,15 @@
 import Foundation
 
 /// One block of a parsed Markdown document (a heading, a paragraph, a list
-/// item, a code block, a quote, a rule, a GFM table or a display equation),
-/// each with its own `AttributedString` so inline formatting (bold, links,
-/// inline code) inside it still renders. Foundation's
-/// `AttributedString(markdown:)` parses headings/paragraphs/lists/code/
-/// quotes into `presentationIntent` but drops the text separators between
-/// blocks, and doesn't parse GFM tables or LaTeX at all — `blocks(of:)`
-/// pre-scans the raw text line by line for tables and display equations,
-/// then hands whatever's left to the `AttributedString`-based parser for
-/// everything else.
+/// item, a code block, a quote, a rule, a table — GFM pipe syntax or a raw
+/// LaTeX `tabular` environment — or a display equation), each with its own
+/// `AttributedString` so inline formatting (bold, links, inline code)
+/// inside it still renders. Foundation's `AttributedString(markdown:)`
+/// parses headings/paragraphs/lists/code/quotes into `presentationIntent`
+/// but drops the text separators between blocks, and doesn't parse tables
+/// or LaTeX at all — `blocks(of:)` pre-scans the raw text line by line for
+/// tables and display equations, then hands whatever's left to the
+/// `AttributedString`-based parser for everything else.
 struct MarkdownBlock: Identifiable, Equatable {
     enum ColumnAlignment: Equatable {
         case leading, center, trailing
@@ -82,7 +82,7 @@ struct MarkdownBlock: Identifiable, Equatable {
                 index = equation.nextIndex
                 continue
             }
-            if !insideCodeFence, let table = gfmTable(at: index, in: lines) {
+            if !insideCodeFence, let table = gfmTable(at: index, in: lines) ?? latexTable(at: index, in: lines) {
                 flushProse()
                 blocks.append(MarkdownBlock(
                     id: blocks.count,
@@ -281,6 +281,86 @@ struct MarkdownBlock: Identifiable, Equatable {
     private static func tableCell(_ text: String) -> TableCell {
         if let latex = wholeStringEquation(text) { return .equation(latex) }
         return .text(inlineAttributed(text))
+    }
+
+    // MARK: - LaTeX tables
+
+    /// A raw `\begin{tabular}{...} ... \end{tabular}` environment — what a
+    /// model asked to write actual LaTeX (rather than Markdown) reaches
+    /// for, distinct from a GFM pipe table. Only the tabular environment
+    /// itself is understood; a `\begin{table}[h]`/`\caption`/`\label`
+    /// wrapper around it, if present, is left as literal text, the same
+    /// way an equation is pulled out of surrounding prose without trying
+    /// to parse the rest of a LaTeX document.
+    private static func latexTable(at index: Int, in lines: [String]) -> TableMatch? {
+        guard let colSpec = latexColumnSpec(in: lines[index].trimmingCharacters(in: .whitespaces)) else { return nil }
+        let alignment = latexColumnAlignment(colSpec)
+        guard !alignment.isEmpty else { return nil }
+
+        var rows: [[String]] = []
+        var pendingRow = ""
+        var cursor = index + 1
+        var closed = false
+        while cursor < lines.count {
+            let trimmedLine = lines[cursor].trimmingCharacters(in: .whitespaces)
+            if trimmedLine.hasPrefix("\\end{tabular}") {
+                closed = true
+                cursor += 1
+                break
+            }
+            // \hline / \cline{...} are row separators, not content.
+            if !trimmedLine.isEmpty, trimmedLine != "\\hline", !trimmedLine.hasPrefix("\\cline") {
+                pendingRow += (pendingRow.isEmpty ? "" : " ") + trimmedLine
+                if pendingRow.hasSuffix("\\\\") {
+                    let cells = splitLatexRow(pendingRow)
+                    if cells.count == alignment.count { rows.append(cells) }
+                    pendingRow = ""
+                }
+            }
+            cursor += 1
+        }
+        // Unterminated (still streaming, or malformed) — leave as plain
+        // text rather than guess at a row structure that never closed.
+        guard closed, !rows.isEmpty else { return nil }
+
+        let header = rows.removeFirst()
+        return TableMatch(
+            header: header.map(tableCell),
+            alignment: alignment,
+            rows: rows.map { $0.map(tableCell) },
+            nextIndex: cursor
+        )
+    }
+
+    private static func latexColumnSpec(in line: String) -> String? {
+        guard line.hasPrefix("\\begin{tabular}") else { return nil }
+        let rest = line.dropFirst("\\begin{tabular}".count)
+        guard rest.hasPrefix("{"), let closeBrace = rest.firstIndex(of: "}") else { return nil }
+        return String(rest[rest.index(after: rest.startIndex)..<closeBrace])
+    }
+
+    /// `l`/`c`/`r` map straight to alignment; everything else in a colspec
+    /// (`|`, `@{}`, a `p{width}` column's braces) is formatting LaTeX
+    /// controls itself, so it's just skipped rather than modeled.
+    private static func latexColumnAlignment(_ colSpec: String) -> [ColumnAlignment] {
+        colSpec.compactMap { char in
+            switch char {
+            case "l": .leading
+            case "c": .center
+            case "r": .trailing
+            default: nil
+            }
+        }
+    }
+
+    /// Splits a LaTeX table row ("`A & B \\`") into trimmed cells on `&`,
+    /// after dropping the row's trailing `\\` terminator.
+    private static func splitLatexRow(_ row: String) -> [String] {
+        var text = row
+        if text.hasSuffix("\\\\") { text.removeLast(2) }
+        return text
+            .components(separatedBy: "&")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
     /// The row of `---`/`:--`/`--:`/`:-:` cells right under a table header,

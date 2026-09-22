@@ -356,6 +356,40 @@ struct MarkdownBlockTests {
         #expect(plainText(row[1]) == "normal")
     }
 
+    @Test func parsesARawLatexTabularEnvironment() {
+        // The regression this covers: a model asked to write actual LaTeX
+        // (not Markdown) reaches for \begin{tabular}, not | pipes — issue
+        // reported as "funciona, pero en este caso no".
+        let markdown = #"""
+        \begin{tabular}{|c|c|}
+        \hline
+        Columna 1 & Columna 2 \\
+        \hline
+        Ecuación 1 & \( E = mc^2 \) \\
+        \hline
+        Ecuación 2 & \( F = ma \) \\
+        \hline
+        \end{tabular}
+        """#
+        let blocks = MarkdownBlock.blocks(of: markdown)
+        guard case .table(let header, let alignment, let rows) = blocks[0].kind else {
+            Issue.record("se esperaba un bloque de tabla")
+            return
+        }
+        #expect(header.map(plainText) == ["Columna 1", "Columna 2"])
+        #expect(alignment == [.center, .center])
+        #expect(rows.count == 2)
+        #expect(plainText(rows[0][0]) == "Ecuación 1")
+        #expect(rows[0][1] == .equation("E = mc^2"))
+        #expect(rows[1][1] == .equation("F = ma"))
+    }
+
+    @Test func doesNotTreatALatexTableInsideACodeFenceAsARealTable() {
+        let markdown = "```latex\n\\begin{tabular}{|c|c|}\n\\hline\nA & B \\\\\n\\end{tabular}\n```"
+        let blocks = MarkdownBlock.blocks(of: markdown)
+        #expect(kinds(blocks) == [.code(language: "latex")])
+    }
+
     @Test func doesNotTreatATableInsideACodeFenceAsARealTable() {
         let blocks = MarkdownBlock.blocks(of: "```\n| a | b |\n| - | - |\n```")
         #expect(kinds(blocks) == [.code(language: nil)])
