@@ -7,7 +7,9 @@ import Testing
 struct ThinkTagSplitterTests {
     /// Feeds every chunk, then calls `finish()` (as the real stream
     /// consumer does once generation ends) and returns the combined delta.
-    /// Mirrors how `ChatViewModel` handles `contentWasReasoning`.
+    /// Mirrors how `ChatViewModel`/`APIServer`/`AskFaroIntent` handle
+    /// `contentWasReasoning`: reclaim only the reported suffix of the
+    /// accumulated content, not all of it.
     private func run(_ chunks: [String]) -> (reasoning: String, content: String) {
         var splitter = ThinkTagSplitter()
         var reasoning = ""
@@ -15,8 +17,9 @@ struct ThinkTagSplitterTests {
         for chunk in chunks {
             let delta = splitter.consume(chunk)
             if delta.contentWasReasoning {
-                reasoning += content
-                content = ""
+                let cut = content.index(content.endIndex, offsetBy: -delta.reclaimedContentLength)
+                reasoning += content[cut...]
+                content = String(content[..<cut])
             }
             reasoning += delta.reasoning
             content += delta.content
@@ -113,6 +116,23 @@ struct ThinkTagSplitterTests {
         let result = run(["primero</think>", "lue", "go</think>final"])
         #expect(result.reasoning == "primeroluego")
         #expect(result.content == "final")
+    }
+
+    /// The sibling bug the fix above could introduce if reclaiming moved
+    /// *everything* accumulated instead of just the current block's own
+    /// leaked tail: "X" is real content, protected from the later implicit
+    /// block's reclaim by an EXPLICIT block ("Y") that closed in between —
+    /// that close resets the leak counter without touching "X", so only
+    /// "Z" (leaked after it, before the next bare `</think>`) gets pulled
+    /// into reasoning. (A bare `</think>` immediately after real content
+    /// with no other close in between — e.g. real text written right
+    /// before a tool call, then the model reasons again with no explicit
+    /// tag — is NOT distinguishable from this splitter's text stream alone;
+    /// see the note on `ThinkTagSplitter.consume`.)
+    @Test func laterImplicitBlockDoesNotSweepUpContentProtectedByAnEarlierExplicitBlock() {
+        let result = run(["uno</think>", "X", "<think>Y</think>", "Z", "reasoning</think>final"])
+        #expect(result.reasoning == "unoYZreasoning")
+        #expect(result.content == "Xfinal")
     }
 }
 

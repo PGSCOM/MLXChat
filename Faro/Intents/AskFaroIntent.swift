@@ -53,7 +53,14 @@ struct AskFaroIntent: AppIntent {
                 // Siri would otherwise read the model's reasoning out loud.
                 guard case .chunk(let piece) = generation else { continue }
                 let delta = splitter.consume(piece)
-                if delta.contentWasReasoning { answer = "" }
+                if delta.contentWasReasoning {
+                    // Drop only what leaked since the last block boundary —
+                    // not the whole answer, which can also hold real text an
+                    // earlier *explicit* block already vouched for (see
+                    // `Delta.reclaimedContentLength`).
+                    let cut = answer.index(answer.endIndex, offsetBy: -delta.reclaimedContentLength)
+                    answer = String(answer[..<cut])
+                }
                 answer += delta.content
             }
             answer += splitter.finish().content

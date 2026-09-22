@@ -98,6 +98,9 @@ struct MCPServersView: View {
         apply(server)
     }
 
+    /// A live `ChatSession` in ANY open conversation bakes in the tool set
+    /// at creation, and MCP servers are shared app-wide — so connecting or
+    /// disconnecting one has to drop every cached session, not just one.
     private func apply(_ server: MCPServerConfig) {
         let snapshot = server.snapshot
         let id = server.id
@@ -111,10 +114,14 @@ struct MCPServersView: View {
                     errors[id] = error.localizedDescription
                     server.isEnabled = false
                 }
+                await InferenceEngine.shared.invalidateAllSessions()
             }
         } else {
             toolsByServer[id] = nil
-            Task { await MCPConnectionManager.shared.disconnect(id) }
+            Task {
+                await MCPConnectionManager.shared.disconnect(id)
+                await InferenceEngine.shared.invalidateAllSessions()
+            }
         }
     }
 
@@ -122,7 +129,10 @@ struct MCPServersView: View {
         for index in offsets {
             let server = servers[index]
             let id = server.id
-            Task { await MCPConnectionManager.shared.disconnect(id) }
+            Task {
+                await MCPConnectionManager.shared.disconnect(id)
+                await InferenceEngine.shared.invalidateAllSessions()
+            }
             modelContext.delete(server)
         }
     }

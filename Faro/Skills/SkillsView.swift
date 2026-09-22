@@ -108,6 +108,7 @@ struct SkillsView: View {
         }
         SkillStore.all = all
         skills = all
+        invalidateSessions()
     }
 
     private func delete(_ skill: Skill) {
@@ -116,6 +117,7 @@ struct SkillsView: View {
         SkillStore.all = all
         skills = all
         editingSkill = nil
+        invalidateSessions()
     }
 
     private func delete(at offsets: IndexSet) {
@@ -123,6 +125,15 @@ struct SkillsView: View {
         all.remove(atOffsets: offsets)
         SkillStore.all = all
         skills = all
+        invalidateSessions()
+    }
+
+    /// Skills are global (`UserDefaults`), so a live `ChatSession` in ANY
+    /// open conversation could be offering a now-stale set of skill tools —
+    /// drop every cached session, not just one, so the next turn anywhere
+    /// rebuilds with the current list.
+    private func invalidateSessions() {
+        Task { await InferenceEngine.shared.invalidateAllSessions() }
     }
 
     private func importSkill(from result: Result<URL, Error>) {

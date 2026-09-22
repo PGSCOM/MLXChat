@@ -228,6 +228,16 @@ actor InferenceEngine {
         toolCallContinuations[conversationID]?.yield(event)
     }
 
+    /// Skills and MCP servers are global — a single `UserDefaults`-backed
+    /// list and one shared `MCPConnectionManager` — not per-conversation, so
+    /// unlike `invalidateSession`, a change to either has to drop every
+    /// cached session at once rather than one conversation's. Apple's engine
+    /// isn't touched: it has no tools wired in (see `streamResponse` below).
+    func invalidateAllSessions() {
+        sessions = [:]
+        toolCallContinuations = [:]
+    }
+
     /// Tool-call events for one conversation's turn in flight. Call this
     /// right before `streamResponse` and consume it concurrently — each
     /// call replaces the previous listener, so it's always this turn's

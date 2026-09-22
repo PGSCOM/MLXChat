@@ -175,17 +175,20 @@ final class ChatViewModel {
                     case .chunk(let piece):
                         let delta = splitter.consume(piece)
                         if delta.contentWasReasoning {
-                            // A bare `</think>` arrived: what already
-                            // streamed into the bubble was the model
-                            // thinking out loud, so move it.
-                            assistantMessage.reasoning =
-                                (assistantMessage.reasoning ?? "") + assistantMessage.content
-                            assistantMessage.content = ""
+                            // A bare `</think>` arrived: move only what
+                            // leaked since the last block boundary, not the
+                            // whole bubble — which can also hold real answer
+                            // text an earlier *explicit* block already
+                            // vouched for (see `Delta.reclaimedContentLength`).
+                            let content = assistantMessage.content
+                            let cut = content.index(content.endIndex, offsetBy: -delta.reclaimedContentLength)
+                            assistantMessage.reasoning = (assistantMessage.reasoning ?? "") + content[cut...]
+                            assistantMessage.content = String(content[..<cut])
                             reasoningStartedAt = reasoningStartedAt ?? streamStartedAt
                         }
                         if !delta.reasoning.isEmpty {
                             if reasoningStartedAt == nil { reasoningStartedAt = .now }
-                            if phase != .writing { enter(.thinking) }
+                            enter(.thinking)
                             assistantMessage.reasoning = (assistantMessage.reasoning ?? "") + delta.reasoning
                         }
                         if !delta.content.isEmpty {
@@ -275,8 +278,12 @@ final class ChatViewModel {
         phaseStartedAt = .now
     }
 
+    /// Called every time content resumes after reasoning — `reasoningStartedAt`
+    /// stays pinned to the *first* segment's start, so a turn with more than
+    /// one reasoning block (a tool call in between) keeps recomputing the
+    /// running total instead of freezing it at the first block's duration.
     private func closeReasoning(on message: ChatMessage, startedAt: Date?) {
-        guard let startedAt, message.reasoningSeconds == nil else { return }
+        guard let startedAt else { return }
         message.reasoningSeconds = Date().timeIntervalSince(startedAt)
     }
 

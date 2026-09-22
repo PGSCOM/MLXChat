@@ -21,7 +21,12 @@ struct ThinkTagSplitter {
     /// `<think>` does so for *that* generation prompt too, not only the
     /// first one.
     private var hasSeenOpenTag = false
-    private var emittedContentBeforeAnyTag = false
+    /// Characters released as plain `content` since the current segment
+    /// started (i.e. since the last block closed, or since the turn began).
+    /// Reset alongside `hasSeenOpenTag`, so it only ever covers the segment
+    /// that's actually at risk of being retroactively reclassified — not
+    /// the whole turn.
+    private var contentSinceSegmentStart = 0
 
     struct Delta {
         var reasoning = ""
@@ -31,8 +36,30 @@ struct ThinkTagSplitter {
         /// withhold the start of every answer until a tag shows up or never
         /// does — which is exactly what used to stall the whole stream.
         var contentWasReasoning = false
+        /// Trailing characters of the *consumer's own already-accumulated*
+        /// content (not this delta's) that belong to the block that just
+        /// closed and should move into reasoning. 0 when `contentWasReasoning`
+        /// is false. Counts only what leaked since the *last* block boundary
+        /// (explicit or implicit) — not everything ever accumulated — so
+        /// real content an earlier explicit block already vouched for
+        /// survives a later implicit block's reclaim. It can NOT tell apart
+        /// real content from leaked reasoning within the *same* unbroken
+        /// stretch (see `consume`'s doc comment for why).
+        var reclaimedContentLength = 0
     }
 
+    /// ponytail: real content emitted right before a tool call, with no
+    /// *other* block boundary between it and the next implicit reopening,
+    /// is text-stream-indistinguishable from that reopening's own leaked
+    /// reasoning — both are just "characters released as content since the
+    /// last close". `InferenceEngine.toolCallEvents` already knows exactly
+    /// when a call starts, which would let a caller "commit" pending
+    /// content as safe right then — not done here because it would need
+    /// cross-stream ordering between that event stream and this one that
+    /// isn't verifiable without a compiler/runtime in this environment.
+    /// Upgrade path if this turns out to matter for a real model: have
+    /// `ChatViewModel`'s `toolCallTask` call a new `splitter.commitContent()`
+    /// on `.started`.
     mutating func consume(_ chunk: String) -> Delta {
         buffer += chunk
         var delta = Delta()
@@ -58,17 +85,17 @@ struct ThinkTagSplitter {
                 hasSeenOpenTag = true
                 delta.content += piece
             } else {
-                if !insideThink && !hasSeenOpenTag && emittedContentBeforeAnyTag {
-                    // Implicitly opened block: reclaim what already went out.
+                if !insideThink && !hasSeenOpenTag && contentSinceSegmentStart > 0 {
+                    // Implicitly opened block: reclaim only this segment's
+                    // own leaked content, not the consumer's whole message.
                     delta.contentWasReasoning = true
-                    delta.reasoning = delta.content + delta.reasoning
-                    delta.content = ""
+                    delta.reclaimedContentLength = contentSinceSegmentStart
                 }
                 delta.reasoning += piece
                 // This block is done — the *next* one starts fresh and may
                 // just as well be implicitly opened again.
                 hasSeenOpenTag = false
-                emittedContentBeforeAnyTag = false
+                contentSinceSegmentStart = 0
             }
 
             buffer.removeSubrange(buffer.startIndex..<range.upperBound)
@@ -85,7 +112,7 @@ struct ThinkTagSplitter {
             delta.reasoning += piece
         } else {
             delta.content += piece
-            if !hasSeenOpenTag && !piece.isEmpty { emittedContentBeforeAnyTag = true }
+            if !hasSeenOpenTag { contentSinceSegmentStart += piece.count }
         }
         buffer.removeSubrange(buffer.startIndex..<cut)
         return delta
