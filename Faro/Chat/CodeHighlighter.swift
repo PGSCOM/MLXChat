@@ -12,6 +12,12 @@ import Highlightr
 /// reflexive saturated blue-purple that would clash with Faro's own warm
 /// near-black + amber-lamp palette (`FaroColor`). Its background is
 /// dropped in favor of the app's own `faroCard()` surface.
+///
+/// `@MainActor`: `Highlightr` and `NSCache` aren't `Sendable`, and every
+/// caller is a SwiftUI `body` anyway (already implicitly main-actor), so
+/// this pins the shared instance there instead of proving thread-safety
+/// the type can't express — same reasoning as `AppleFoundationEngine`.
+@MainActor
 enum CodeHighlighter {
     private static let highlightr: Highlightr? = {
         let highlightr = Highlightr()

@@ -351,7 +351,7 @@ struct MarkdownBlockTests {
 /// never rewrite it — a broken HTML-entity decode or a dropped character
 /// would silently corrupt what the copy button then puts on the pasteboard.
 struct CodeHighlighterTests {
-    @Test func highlightingPreservesTheOriginalCodeText() {
+    @Test @MainActor func highlightingPreservesTheOriginalCodeText() {
         let code = "let x = 1 // a comment with <html> & \"quotes\""
         let result = CodeHighlighter.highlight(code, language: "swift")
         #expect(result.map { String($0.characters) } == code)

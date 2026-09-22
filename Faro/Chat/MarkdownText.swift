@@ -107,7 +107,7 @@ private struct CodeBlockView: View {
         .faroCard()
     }
 
-    private var highlighted: AttributedString? {
+    @MainActor private var highlighted: AttributedString? {
         CodeHighlighter.highlight(String(text.characters), language: language)
     }
 
