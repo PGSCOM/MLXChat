@@ -165,6 +165,8 @@ struct ChatView: View {
         )
     }
 
+    private var shortModelName: String { Self.shortName(viewModel.conversation.modelID) }
+
     private static func shortName(_ modelID: String) -> String {
         if modelID == AppleFoundationModel.id { return AppleFoundationModel.displayName }
         return modelID.split(separator: "/").last.map(String.init) ?? modelID
