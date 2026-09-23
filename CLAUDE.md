@@ -255,7 +255,20 @@ like an MLX model and fits recommended device memory before downloading);
 `Faro/Voice/` is the hands-free conversation mode; `Faro/Files/` extracts
 text from PDF/plain-text attachments for the prompt.
 
-`Faro/Voice/` deliberately stays on `SFSpeechRecognizer` (on-device via
+`Faro/Voice/` runs one of two engines, decided once per `VoiceSession.prepare()`
+and cached in `effectiveEngine` so a listen/speak pair never splits across
+them. `.neural` (the default) is Faro's own on-device models via FluidAudio
+(CoreML/Neural Engine, Apache-2.0, no GPL/espeak): Parakeet TDT v3 to listen,
+PocketTTS or Supertonic-3 to speak — `NeuralVoice.swift` is the *only* file
+that imports FluidAudio, so everything else only ever sees plain Swift types
+(mirrors how `HistoryTurn` keeps MLXLMCommon out of everything but
+`InferenceEngine`). `.apple` is the original `SFSpeechRecognizer` +
+`AVSpeechSynthesizer` path, kept for languages the neural models don't cover
+and for anyone who prefers it. Both engines' models live under `NeuralVoice`
+and `AppReset`, in the same on-disk sense that `HubCache` holds the LLM
+weights — deleting models wipes `Application Support/Voz`.
+
+`.apple` deliberately stays on `SFSpeechRecognizer` (on-device via
 `requiresOnDeviceRecognition`, but only where
 `supportsOnDeviceRecognition` says the assets exist) rather than iOS 26's
 `SpeechAnalyzer` — see the note at the top of `VoiceSession.swift`. Two

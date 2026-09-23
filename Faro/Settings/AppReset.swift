@@ -18,6 +18,7 @@ enum AppReset {
         for id in serverIDs {
             await MCPConnectionManager.shared.disconnect(id)
         }
+        await NeuralVoice.shared.unload()
 
         try? eraseStore(in: context)
         for key in AppSettings.keys + ServerSettings.keys + VoiceSettings.keys {
@@ -30,6 +31,7 @@ enum AppReset {
             try? ModelCacheStore.delete(id)
             await InferenceEngine.shared.evictContainer(modelID: id)
         }
+        NeuralVoice.deleteModels()
     }
 
     /// Every record in the store. Messages are deleted outright as well as

@@ -1028,3 +1028,25 @@ struct MCPTokenTests {
         #expect(server.token.isEmpty)
     }
 }
+
+/// `VoiceSettings`'s language mapping is what steers `NeuralVoice` to the
+/// right PocketTTS pack/voice, so this pins the exact rawValues it depends
+/// on (`PocketTtsLanguage.rawValue`) even though FluidAudio isn't linked
+/// into the test target.
+struct VoiceSettingsLanguageTests {
+    @Test func mapsPocketLanguagesToTheUpstreamPackNames() {
+        #expect(VoiceSettings.pocketLanguagePack(forLanguageCode: "es") == "spanish")
+        #expect(VoiceSettings.pocketLanguagePack(forLanguageCode: "fr") == "french_24l")
+        #expect(VoiceSettings.pocketLanguagePack(forLanguageCode: "en") == "english")
+    }
+
+    @Test func hasNoPocketPackForAnUncoveredLanguage() {
+        #expect(VoiceSettings.pocketLanguagePack(forLanguageCode: "ja") == nil)
+    }
+
+    @Test func picksTheNativeVoiceForEachCoveredLanguage() {
+        #expect(VoiceSettings.nativePocketVoice(forLanguageCode: "es") == "lola")
+        #expect(VoiceSettings.nativePocketVoice(forLanguageCode: "de") == "juergen")
+        #expect(VoiceSettings.nativePocketVoice(forLanguageCode: "ja") == "alba")
+    }
+}

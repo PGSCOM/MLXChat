@@ -42,6 +42,9 @@ packages:
   Highlightr:
     url: https://github.com/raspu/Highlightr
     from: 2.3.0
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio
+    from: 0.16.1
 
 targets:
   Faro:
@@ -75,6 +78,8 @@ targets:
         product: SwiftMath
       - package: Highlightr
         product: Highlightr
+      - package: FluidAudio
+        product: FluidAudio
     info:
       path: Generated/Info.plist
       properties:
