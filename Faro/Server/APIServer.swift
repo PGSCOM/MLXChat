@@ -208,7 +208,7 @@ final class APIServer {
     ) -> HTTPResponse {
         let (body, continuation) = AsyncStream<Data>.makeStream()
 
-        Task {
+        let task = Task {
             defer {
                 continuation.finish()
                 Task { await InferenceEngine.shared.invalidateSession(conversationID: requestID) }
@@ -250,6 +250,12 @@ final class APIServer {
                 continuation.yield(Data("data: {\"error\":\"\(error.localizedDescription)\"}\n\n".utf8))
             }
         }
+        // Same pattern as `InferenceEngine.replayingOpenTag`: if the client
+        // drops the connection mid-stream, FlyingFox tearing down its side
+        // of `body` finishes this continuation, which cancels `task` here —
+        // otherwise generation would keep running to the end for a reply
+        // nobody's left to read.
+        continuation.onTermination = { _ in task.cancel() }
 
         return HTTPResponse(
             statusCode: .ok,
