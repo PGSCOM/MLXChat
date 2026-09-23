@@ -19,18 +19,35 @@ jobs:
         with:
           xcode-version: "26.4"
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install XcodeGen (pinned)
+        run: |
+          XCGEN_VERSION=2.46.0
+          curl -fsSL -o /tmp/xcodegen.zip "https://github.com/yonaskolb/XcodeGen/releases/download/${XCGEN_VERSION}/xcodegen.zip"
+          rm -rf /tmp/xcodegen && mkdir -p /tmp/xcodegen
+          unzip -o -q /tmp/xcodegen.zip -d /tmp/xcodegen
+          sudo mkdir -p /usr/local/bin
+          sudo install -m 755 /tmp/xcodegen/xcodegen /usr/local/bin/xcodegen
+          xcodegen --version
 
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
 
+      - name: Restore Package.resolved lockfile (if committed)
+        run: |
+          if [ -f Packages/Package.resolved ]; then
+            mkdir -p Faro.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
+            cp Packages/Package.resolved Faro.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          fi
+
       - name: Cache SwiftPM checkouts
         uses: actions/cache@v6
         with:
-          path: SourcePackages
-          key: ${{ runner.os }}-spm-${{ hashFiles('project.yml') }}
-          restore-keys: ${{ runner.os }}-spm-
+          path: |
+            SourcePackages
+            ~/Library/Caches/org.swift.swiftpm
+          key: macos-26-spm-xcode26.4-${{ hashFiles('Packages/Package.resolved', 'project.yml') }}
+          restore-keys: |
+            macos-26-spm-xcode26.4-
 
       - name: Resolve package dependencies
         run: |
@@ -39,13 +56,6 @@ jobs:
             -clonedSourcePackagesDirPath "$PWD/SourcePackages" \
             -skipPackagePluginValidation
 
-      - name: Cache DerivedData
-        uses: actions/cache@v6
-        with:
-          path: DerivedData
-          key: ${{ runner.os }}-derived-data-${{ hashFiles('**/*.swift', 'project.yml') }}
-          restore-keys: ${{ runner.os }}-derived-data-
-          
       - name: Build (unsigned)
         run: |
           set -o pipefail
@@ -112,25 +122,35 @@ jobs:
         with:
           xcode-version: "26.4"
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install XcodeGen (pinned)
+        run: |
+          XCGEN_VERSION=2.46.0
+          curl -fsSL -o /tmp/xcodegen.zip "https://github.com/yonaskolb/XcodeGen/releases/download/${XCGEN_VERSION}/xcodegen.zip"
+          rm -rf /tmp/xcodegen && mkdir -p /tmp/xcodegen
+          unzip -o -q /tmp/xcodegen.zip -d /tmp/xcodegen
+          sudo mkdir -p /usr/local/bin
+          sudo install -m 755 /tmp/xcodegen/xcodegen /usr/local/bin/xcodegen
+          xcodegen --version
 
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
 
+      - name: Restore Package.resolved lockfile (if committed)
+        run: |
+          if [ -f Packages/Package.resolved ]; then
+            mkdir -p Faro.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
+            cp Packages/Package.resolved Faro.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          fi
+
       - name: Cache SwiftPM checkouts
         uses: actions/cache@v6
         with:
-          path: SourcePackages
-          key: ${{ runner.os }}-spm-${{ hashFiles('project.yml') }}
-          restore-keys: ${{ runner.os }}-spm-
-
-      - name: Cache DerivedData
-        uses: actions/cache@v6
-        with:
-          path: DerivedData
-          key: ${{ runner.os }}-derived-data-test-${{ hashFiles('**/*.swift', 'project.yml') }}
-          restore-keys: ${{ runner.os }}-derived-data-test-
+          path: |
+            SourcePackages
+            ~/Library/Caches/org.swift.swiftpm
+          key: macos-26-spm-xcode26.4-${{ hashFiles('Packages/Package.resolved', 'project.yml') }}
+          restore-keys: |
+            macos-26-spm-xcode26.4-
 
       - name: Run unit tests
         run: |
