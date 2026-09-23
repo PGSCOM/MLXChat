@@ -1,31 +1,39 @@
 import SwiftUI
+import UIKit
 
-/// Design tokens for Faro. The whole app is one warm, near-black surface
-/// lit by a single source — the lamp. `lamp`/`lampCore` belong to the
+/// Design tokens for Faro. One warm surface lit by a single source — the
+/// lamp — in either appearance: near-black in dark mode, warm paper in
+/// light. Every token follows the system setting (see `adaptive(dark:light:)`)
+/// so the whole app repaints together. `lamp`/`lampCore` belong to the
 /// light (the beam, live state, the primary action); everything else is
 /// tone: `bone` for what must be read, `ash` for what supports it.
 enum FaroColor {
-    static let ink = Color(hex: 0x100F0D)
-    static let inkRaised = Color(hex: 0x1A1815)
+    static let ink = adaptive(dark: 0x100F0D, light: 0xF6F1E6)
+    static let inkRaised = adaptive(dark: 0x1A1815, light: 0xFFFDF7)
     /// Self-coloured hairline: a lip catching the lamp, not a drawn outline.
-    static let edge = Color(hex: 0x2B2620)
-    static let lamp = Color(hex: 0xF5C15A)
-    static let lampCore = Color(hex: 0xFFF1D6)
-    static let bone = Color(hex: 0xEFE7DA)
-    static let ash = Color(hex: 0x9C9488)
+    static let edge = adaptive(dark: 0x2B2620, light: 0xE2D8C4)
+    static let lamp = adaptive(dark: 0xF5C15A, light: 0x8F5710)
+    static let lampCore = adaptive(dark: 0xFFF1D6, light: 0xC9862A)
+    static let bone = adaptive(dark: 0xEFE7DA, light: 0x1C1712)
+    static let ash = adaptive(dark: 0x9C9488, light: 0x6B6156)
     /// Errors, exclusively. Muted brick rather than a poster-bright red,
     /// far enough from the lamp's amber to never read as "lit".
-    static let error = Color(hex: 0xD4675A)
+    static let error = adaptive(dark: 0xD4675A, light: 0xB3392A)
+
+    /// A `Color` that resolves per trait collection, so it repaints with
+    /// the system appearance (or an in-app override) with no extra state.
+    private static func adaptive(dark: UInt32, light: UInt32) -> Color {
+        Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light) })
+    }
 }
 
-extension Color {
-    init(hex: UInt32, opacity: Double = 1) {
+private extension UIColor {
+    convenience init(hex: UInt32) {
         self.init(
-            .sRGB,
-            red: Double((hex >> 16) & 0xFF) / 255,
-            green: Double((hex >> 8) & 0xFF) / 255,
-            blue: Double(hex & 0xFF) / 255,
-            opacity: opacity
+            red: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            alpha: 1
         )
     }
 }
