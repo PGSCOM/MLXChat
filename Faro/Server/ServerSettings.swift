@@ -27,4 +27,9 @@ enum ServerSettings {
         }
         set { UserDefaults.standard.set(newValue, forKey: tokenKey) }
     }
+
+    static func reset() {
+        UserDefaults.standard.removeObject(forKey: portKey)
+        UserDefaults.standard.removeObject(forKey: tokenKey)
+    }
 }

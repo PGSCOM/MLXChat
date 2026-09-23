@@ -8,10 +8,13 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query private var conversations: [Conversation]
+    @Query private var projects: [Project]
+    @Query private var mcpServers: [MCPServerConfig]
 
     @State private var destination: Destination?
     @State private var systemPrompt = AppSettings.defaultSystemPrompt
     @State private var pendingHistoryDeletion = false
+    @State private var pendingAppReset = false
 
     private enum Destination: String, Identifiable {
         case models, voice, server, mcp
@@ -46,6 +49,14 @@ struct SettingsView: View {
                 } footer: {
                     Text("Todo ocurre en este dispositivo: nada de esto sale de aquí.")
                 }
+
+                Section {
+                    Button("Restablecer app", role: .destructive) {
+                        pendingAppReset = true
+                    }
+                } footer: {
+                    Text("Borra conversaciones, proyectos, servidores MCP y preferencias. Los modelos descargados no se tocan.")
+                }
             }
             .scrollContentBackground(.hidden)
             .background(FaroColor.ink)
@@ -69,6 +80,16 @@ struct SettingsView: View {
                 Button("Cancelar", role: .cancel) { pendingHistoryDeletion = false }
             } message: {
                 Text("Se borrarán \(conversations.count) conversaciones. No se puede deshacer.")
+            }
+            .confirmationDialog(
+                "¿Restablecer la app?",
+                isPresented: $pendingAppReset,
+                titleVisibility: .visible
+            ) {
+                Button("Restablecer", role: .destructive) { resetApp() }
+                Button("Cancelar", role: .cancel) { pendingAppReset = false }
+            } message: {
+                Text("Se borrará todo: conversaciones, proyectos, servidores MCP y preferencias. No se puede deshacer.")
             }
         }
     }
@@ -115,5 +136,20 @@ struct SettingsView: View {
             modelContext.delete(conversation)
         }
         try? modelContext.save()
+    }
+
+    private func resetApp() {
+        pendingAppReset = false
+        for conversation in conversations { modelContext.delete(conversation) }
+        for project in projects { modelContext.delete(project) }
+        for server in mcpServers { modelContext.delete(server) }
+        try? modelContext.save()
+
+        AppSettings.reset()
+        ServerSettings.reset()
+        VoiceSettings.reset()
+        systemPrompt = ""
+
+        dismiss()
     }
 }
