@@ -7,6 +7,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+
 jobs:
   build:
     runs-on: macos-26
@@ -43,9 +50,11 @@ jobs:
         uses: actions/cache@v6
         with:
           path: DerivedData
-          key: ${{ runner.os }}-derived-data-${{ hashFiles('**/*.swift', 'project.yml') }}
-          restore-keys: ${{ runner.os }}-derived-data-
-          
+          key: ${{ runner.os }}-derived-data-${{ hashFiles('project.yml') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-derived-data-${{ hashFiles('project.yml') }}-
+            ${{ runner.os }}-derived-data-
+
       - name: Build (unsigned)
         run: |
           set -o pipefail
@@ -129,8 +138,10 @@ jobs:
         uses: actions/cache@v6
         with:
           path: DerivedData
-          key: ${{ runner.os }}-derived-data-test-${{ hashFiles('**/*.swift', 'project.yml') }}
-          restore-keys: ${{ runner.os }}-derived-data-test-
+          key: ${{ runner.os }}-derived-data-test-${{ hashFiles('project.yml') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-derived-data-test-${{ hashFiles('project.yml') }}-
+            ${{ runner.os }}-derived-data-test-
 
       - name: Run unit tests
         run: |
