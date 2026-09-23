@@ -4,10 +4,12 @@ import SwiftUI
 /// The illustration shown before a conversation exists, rendered by Lottie's
 /// own engine rather than flattened to a bitmap. lottie-ios has no support
 /// for dotLottie's slot/theme system, so each appearance ships as its own
-/// pre-baked JSON (`NuevaConversacionClaro`/`Oscuro`) with the file's real
-/// "Claro" theme colors already applied — verified pixel-for-pixel against
-/// the official dotlottie-web renderer's live `.setTheme()` output, so it's
-/// not a guess at what those colors should be.
+/// JSON with every slot already resolved: `NuevaConversacionOscuro` is the
+/// source file's defaults, `NuevaConversacionClaro` its "Claro" theme. Both
+/// come out of `scripts/bake_lottie.py`; regenerate them there, never by
+/// hand. The export's inline fallback values are stale, so a hand-edited
+/// file makes lottie-ios read leftover gradient stops as opacity and draw
+/// the tower see-through.
 struct NuevaConversacionAnimationView: View {
     @Environment(\.colorScheme) private var colorScheme
 
