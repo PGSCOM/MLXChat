@@ -6,6 +6,10 @@ struct MessageView: View {
     /// Set only on the message currently being generated, so the bubble
     /// can report what the model is doing right now.
     var liveTurn: LiveTurn?
+    let viewModel: ChatViewModel
+    /// Models already on disk, for the "relanzar con" menu — same list
+    /// `ChatView`'s own model picker uses.
+    let quickModelIDs: [String]
 
     struct LiveTurn: Equatable {
         let phase: TurnPhase
@@ -15,24 +19,46 @@ struct MessageView: View {
     var body: some View {
         switch message.role {
         case .user:
-            HStack {
-                Spacer(minLength: 48)
-                UserBubble(content: message.content, imageData: message.imageData)
+            VStack(alignment: .trailing, spacing: 6) {
+                HStack {
+                    Spacer(minLength: 48)
+                    UserBubble(message: message)
+                        .contextMenu {
+                            Button {
+                                UIPasteboard.general.string = message.content
+                            } label: {
+                                Label("Copiar", systemImage: "doc.on.doc")
+                            }
+                            if !viewModel.isGenerating {
+                                Button {
+                                    viewModel.beginEditing(message)
+                                } label: {
+                                    Label("Editar", systemImage: "pencil")
+                                }
+                            }
+                        }
+                }
+                if siblings.count > 1 {
+                    BranchSwitcher(index: siblingIndex, count: siblings.count, disabled: viewModel.isGenerating) { offset in
+                        viewModel.showSibling(of: message, offset: offset)
+                    }
+                }
             }
         case .assistant:
             VStack(alignment: .leading, spacing: 10) {
                 reasoning
                 if !message.content.isEmpty {
-                    MarkdownText(content: message.content, parsed: liveTurn == nil)
+                    MarkdownText(content: message.content)
                         .foregroundStyle(FaroColor.bone)
                 }
                 if let liveTurn, showsStatusLine(liveTurn) {
                     TurnStatusLine(turn: liveTurn)
                 }
-                if liveTurn == nil, let tps = message.tokensPerSecond, tps > 0 {
-                    Text(String(format: "%.1f tok/s", tps))
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(FaroColor.ash)
+                if liveTurn == nil {
+                    AssistantActionRow(
+                        message: message, viewModel: viewModel, quickModelIDs: quickModelIDs,
+                        siblings: siblings, siblingIndex: siblingIndex
+                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -40,6 +66,12 @@ struct MessageView: View {
         case .system:
             EmptyView()
         }
+    }
+
+    private var siblings: [ChatMessage] { viewModel.siblings(of: message) }
+
+    private var siblingIndex: Int {
+        siblings.firstIndex(where: { $0.id == message.id }) ?? 0
     }
 
     private var reasoningText: String? {
@@ -74,6 +106,13 @@ struct MessageView: View {
     }
 }
 
+/// The short name shown for a model — the toolbar picker (`ChatView`) uses
+/// the same one, so a model reads identically everywhere it's named.
+func shortModelName(_ modelID: String) -> String {
+    if modelID == AppleFoundationModel.id { return AppleFoundationModel.displayName }
+    return modelID.split(separator: "/").last.map(String.init) ?? modelID
+}
+
 /// Counts up from the moment the phase began. The label is always
 /// rendered — the timer only refreshes the number beside it, so nothing
 /// here can disappear if the timeline never ticks.
@@ -99,6 +138,175 @@ private struct TurnStatusLine: View {
         case .writing: "Escribiendo…"
         case .idle: ""
         }
+    }
+}
+
+/// The row under a finished reply: copy, relaunch (optionally with another
+/// model), a branch switcher when other versions exist, and which model
+/// wrote this one. Bare icons only — no tiles, no dividers, no pills.
+private struct AssistantActionRow: View {
+    let message: ChatMessage
+    let viewModel: ChatViewModel
+    let quickModelIDs: [String]
+    let siblings: [ChatMessage]
+    let siblingIndex: Int
+    @State private var copied = false
+
+    var body: some View {
+        HStack(spacing: 18) {
+            Button {
+                UIPasteboard.general.string = message.content
+                copied = true
+            } label: {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(copied ? FaroColor.lamp : FaroColor.ash)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(copied ? "Copiado" : "Copiar el mensaje")
+
+            if !viewModel.isGenerating {
+                Menu {
+                    Button {
+                        viewModel.regenerate(message)
+                    } label: {
+                        Label("Relanzar", systemImage: "arrow.clockwise")
+                    }
+                    if !otherModels.isEmpty {
+                        Section("Relanzar con") {
+                            ForEach(otherModels, id: \.self) { id in
+                                Button(shortModelName(id)) {
+                                    viewModel.regenerate(message, with: id)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(FaroColor.ash)
+                }
+                .accessibilityLabel("Relanzar la respuesta")
+            }
+
+            if siblings.count > 1 {
+                BranchSwitcher(index: siblingIndex, count: siblings.count, disabled: viewModel.isGenerating) { offset in
+                    viewModel.showSibling(of: message, offset: offset)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            footer
+        }
+        .task(id: copied) {
+            guard copied else { return }
+            try? await Task.sleep(for: .seconds(1.5))
+            copied = false
+        }
+    }
+
+    /// Other downloaded models this reply could be relaunched with —
+    /// whichever model actually wrote it (which may no longer be the
+    /// conversation's current model) is left out of its own list.
+    private var otherModels: [String] {
+        quickModelIDs.filter { $0 != (message.modelID ?? viewModel.conversation.modelID) }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            if let modelID = message.modelID {
+                Text(shortModelName(modelID)).lineLimit(1)
+            }
+            if let tps = message.tokensPerSecond, tps > 0 {
+                Text(String(format: "%.1f tok/s", tps))
+                    .font(.system(.caption2, design: .monospaced))
+            }
+        }
+        .font(.footnote)
+        .foregroundStyle(FaroColor.ash)
+    }
+}
+
+/// `‹ 2/3 ›`: switches between sibling versions of an edited or relaunched
+/// message. The ends disable rather than wrap, so the count never lies.
+private struct BranchSwitcher: View {
+    let index: Int
+    let count: Int
+    let disabled: Bool
+    let select: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button { select(-1) } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .disabled(disabled || index == 0)
+            .accessibilityLabel("Versión anterior")
+
+            Text("\(index + 1)/\(count)")
+                .font(.footnote)
+                .monospacedDigit()
+                .accessibilityLabel("Versión \(index + 1) de \(count)")
+
+            Button { select(1) } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .disabled(disabled || index == count - 1)
+            .accessibilityLabel("Versión siguiente")
+        }
+        .foregroundStyle(FaroColor.ash)
+        .opacity(disabled ? 0.5 : 1)
+    }
+}
+
+/// The word the model is busy with, lit by the same lamp as the beam: a
+/// warm pass travelling across the glyphs while the turn is live. Driven
+/// off the timeline's clock rather than a repeating animation, so a redraw
+/// on every token can't leave it stranded mid-sweep — and the label is
+/// drawn at full strength underneath, so it stays readable if the timeline
+/// never ticks at all or motion is reduced.
+private struct SweptLabel: View {
+    let text: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// One pass, plus a beat of darkness before the next one comes round.
+    private static let period: Double = 2.6
+
+    var body: some View {
+        label
+            .foregroundStyle(FaroColor.ash)
+            .overlay { if !reduceMotion { light } }
+    }
+
+    private var label: some View {
+        Text(text).font(.footnote.weight(.medium))
+    }
+
+    private var light: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+                .truncatingRemainder(dividingBy: Self.period) / Self.period
+            GeometryReader { geo in
+                LinearGradient(
+                    stops: [
+                        .init(color: FaroColor.lampCore.opacity(0), location: 0),
+                        .init(color: FaroColor.lampCore, location: 0.5),
+                        .init(color: FaroColor.lampCore.opacity(0), location: 1),
+                    ],
+                    startPoint: .leading, endPoint: .trailing
+                )
+                .frame(width: geo.size.width * 0.7)
+                // Starts fully off the left edge, leaves fully past the right.
+                .offset(x: (t * 1.7 - 0.7) * geo.size.width)
+            }
+            .mask(label)
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -201,70 +409,31 @@ struct ReasoningCard: View {
     }
 }
 
-/// The word the model is busy with, lit by the same lamp as the beam: a
-/// warm pass travelling across the glyphs while the turn is live. Driven
-/// off the timeline's clock rather than a repeating animation, so a redraw
-/// on every token can't leave it stranded mid-sweep — and the label is
-/// drawn at full strength underneath, so it stays readable if the timeline
-/// never ticks at all or motion is reduced.
-private struct SweptLabel: View {
-    let text: String
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// One pass, plus a beat of darkness before the next one comes round.
-    private static let period: Double = 2.6
-
-    var body: some View {
-        label
-            .foregroundStyle(FaroColor.ash)
-            .overlay { if !reduceMotion { light } }
-    }
-
-    private var label: some View {
-        Text(text).font(.footnote.weight(.medium))
-    }
-
-    private var light: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: Self.period) / Self.period
-            GeometryReader { geo in
-                LinearGradient(
-                    stops: [
-                        .init(color: FaroColor.lampCore.opacity(0), location: 0),
-                        .init(color: FaroColor.lampCore, location: 0.5),
-                        .init(color: FaroColor.lampCore.opacity(0), location: 1),
-                    ],
-                    startPoint: .leading, endPoint: .trailing
-                )
-                .frame(width: geo.size.width * 0.7)
-                // Starts fully off the left edge, leaves fully past the right.
-                .offset(x: (t * 1.7 - 0.7) * geo.size.width)
-            }
-            .mask(label)
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-/// A pasted file attachment can make a user message huge — this keeps
-/// the bubble readable without ever hiding the real content
-/// behind opacity or an entrance animation; it's a plain length cap the
-/// person can lift, same idea as the reasoning card above.
+/// A user turn: its image (if any), its attachment named but not spelled
+/// out in full, then what was actually typed. A pasted file's extracted
+/// text used to sit inline in the bubble; it now lives on the message
+/// itself, so only the file name shows here.
 private struct UserBubble: View {
-    let content: String
-    let imageData: Data?
+    let message: ChatMessage
     @State private var expanded = false
     private static let previewLimit = 600
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
-            if let imageData, let image = UIImage(data: imageData) {
+            if let imageData = message.imageData, let image = UIImage(data: imageData) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: 220, maxHeight: 220)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
+            }
+            if let name = message.attachmentName {
+                HStack(spacing: 6) {
+                    Image(systemName: "doc.text")
+                    Text(name).lineLimit(1)
+                }
+                .font(.caption)
+                .foregroundStyle(FaroColor.ash)
             }
             MarkdownText(content: displayedContent)
                 .foregroundStyle(FaroColor.bone)
@@ -272,7 +441,7 @@ private struct UserBubble: View {
                 .padding(.vertical, 10)
                 .faroCard()
 
-            if content.count > Self.previewLimit {
+            if message.content.count > Self.previewLimit {
                 Button(expanded ? "Mostrar menos" : "Mostrar todo") {
                     expanded.toggle()
                 }
@@ -283,7 +452,7 @@ private struct UserBubble: View {
     }
 
     private var displayedContent: String {
-        guard !expanded, content.count > Self.previewLimit else { return content }
-        return String(content.prefix(Self.previewLimit)) + "…"
+        guard !expanded, message.content.count > Self.previewLimit else { return message.content }
+        return String(message.content.prefix(Self.previewLimit)) + "…"
     }
 }
