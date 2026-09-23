@@ -61,20 +61,39 @@ enum ModelCapabilityProbe {
         }
     }
 
+    /// A quoted Jinja string literal — text the template prints, not code.
+    private static let stringLiteral = try! NSRegularExpression(
+        pattern: #"'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*""#
+    )
+
     /// True when the template reads a `tools` variable — the model was
-    /// trained to call them, whatever dialect it emits them in.
+    /// trained to call them, whatever dialect it emits them in — and can
+    /// take a tool's result back. `InferenceEngine` only offers tools to a
+    /// model this says yes to.
     ///
-    /// Deliberately NOT `ToolCallFormat.infer(from:) != nil`
-    /// (mlx-swift-lm): that function's own doc comment on
-    /// `ModelConfiguration.toolCallFormat` says "nil = default JSON
-    /// format" — `nil` means "this model uses the common
-    /// `<tool_call>{...}</tool_call>` dialect", not "no tool support".
-    /// `infer` only returns non-nil for the handful of architectures that
-    /// use a *different* dialect (LFM2, GLM4, Gemma, Llama, Mistral,
-    /// Qwen3.5...); reading it as "supports tools" reports Qwen, Phi and
-    /// SmolLM3 — which all use the default dialect — as unsupported.
+    /// String literals are blanked out first: SmolLM3 only mentions
+    /// `<tools>` inside text it prints and reads its tools from
+    /// `xml_tools`, so a `tools` list handed to it never reaches the model.
+    ///
+    /// The second half is about the inference library, not the model:
+    /// `ChatSession` (mlx-swift-lm 3.31.4) hands a tool's result back by
+    /// rendering the `tool` message alone, and Qwen3.5's template refuses
+    /// any render without a user message — a Jinja `TemplateException`
+    /// in the middle of the answer.
+    ///
+    /// ponytail: matches that template's own error text. Once mlx-swift-lm
+    /// tags the transcript-aware `ChatSession` already on its `main` (it
+    /// re-renders the whole conversation every turn), drop that half.
+    ///
+    /// Deliberately NOT `ToolCallFormat.infer(from:) != nil` (mlx-swift-lm):
+    /// `nil` there means "the common `<tool_call>{...}</tool_call>`
+    /// dialect", not "no tool support" — it would call Qwen3 unsupported.
     static func supportsTools(chatTemplate: String) -> Bool {
-        chatTemplate.range(of: #"\btools\b"#, options: .regularExpression) != nil
+        let range = NSRange(chatTemplate.startIndex..., in: chatTemplate)
+        let code = stringLiteral.stringByReplacingMatches(
+            in: chatTemplate, range: range, withTemplate: "''")
+        return code.range(of: #"\btools\b"#, options: .regularExpression) != nil
+            && !chatTemplate.contains("No user query found")
     }
 
     /// Downloads just the chat template — not the model — used before the

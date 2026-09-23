@@ -48,18 +48,13 @@ struct ThinkTagSplitter {
         var reclaimedContentLength = 0
     }
 
-    /// ponytail: real content emitted right before a tool call, with no
-    /// *other* block boundary between it and the next implicit reopening,
-    /// is text-stream-indistinguishable from that reopening's own leaked
-    /// reasoning — both are just "characters released as content since the
-    /// last close". `InferenceEngine.toolCallEvents` already knows exactly
-    /// when a call starts, which would let a caller "commit" pending
-    /// content as safe right then — not done here because it would need
-    /// cross-stream ordering between that event stream and this one that
-    /// isn't verifiable without a compiler/runtime in this environment.
-    /// Upgrade path if this turns out to matter for a real model: have
-    /// `ChatViewModel`'s `toolCallTask` call a new `splitter.commitContent()`
-    /// on `.started`.
+    /// ponytail: real content written right before a tool call, with no
+    /// other block boundary between it and the next implicitly reopened
+    /// block, is indistinguishable in the text stream from that block's own
+    /// leaked reasoning — both are "content since the last close". Upgrade
+    /// path if a real model hits it: have `ChatViewModel`'s `toolCallTask`
+    /// call a new `splitter.commitContent()` on `.started`, since the
+    /// tool-call events already mark exactly when a call begins.
     mutating func consume(_ chunk: String) -> Delta {
         buffer += chunk
         var delta = Delta()

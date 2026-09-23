@@ -47,6 +47,9 @@ struct AskFaroIntent: AppIntent {
                 systemPrompt: effectiveSystemPrompt,
                 history: [],
                 settings: .recommended,
+                // Siri waits in silence while the model reasons, and would
+                // throw the reasoning away anyway.
+                enableThinking: false,
                 prompt: prompt
             )
             for try await generation in stream {

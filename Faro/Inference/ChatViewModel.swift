@@ -119,16 +119,13 @@ final class ChatViewModel {
         let modelID = conversation.modelID
         let effort = conversation.thinkingEffort
         let style = conversation.responseStyle ?? Personalization.style
-        // The hint text goes to the model only — the saved/shown user
-        // message (`text`, already persisted above) stays clean.
         let systemPrompt = [
             Personalization.preamble(style: style),
             SkillStore.alwaysOnInstructions(),
             conversation.effectiveSystemPrompt,
-            effort.systemHint,
         ].filter { !$0.isEmpty }.joined(separator: "\n\n")
-        let promptForModel = text + effort.promptSuffix
         let settings = conversation.effectiveGenerationSettings
+        let prompt = text
 
         let downloadCoordinator = ModelDownloadCoordinator.shared
         // Apple's model is already on the device: there is no download or
@@ -141,6 +138,7 @@ final class ChatViewModel {
             var splitter = ThinkTagSplitter()
             let streamStartedAt = Date()
             var reasoningStartedAt: Date?
+            var stoppedAtTokenLimit = false
             // Registered before the stream starts, so a tool call on the
             // very first turn isn't missed. Runs concurrently with the
             // generation loop below rather than as a callback threaded
@@ -166,7 +164,8 @@ final class ChatViewModel {
                 let stream = try await InferenceEngine.shared.streamResponse(
                     conversationID: conversationID, modelID: modelID,
                     systemPrompt: systemPrompt, history: history,
-                    settings: settings, prompt: promptForModel, imageData: imageData,
+                    settings: settings, enableThinking: effort.enableThinking,
+                    prompt: prompt, imageData: imageData,
                     progress: { value in
                         // `.shared` referenced inside the hop, not captured
                         // by this `@Sendable` closure, since the coordinator
@@ -205,6 +204,7 @@ final class ChatViewModel {
                         }
                     case .info(let info):
                         assistantMessage.tokensPerSecond = info.tokensPerSecond
+                        stoppedAtTokenLimit = info.stopReason == .length
                     default:
                         // Tool calls are resolved inside ChatSession itself
                         // (see InferenceEngine) and reported separately via
@@ -229,6 +229,24 @@ final class ChatViewModel {
                 assistantMessage.content += tail.content
             }
             closeReasoning(on: assistantMessage, startedAt: reasoningStartedAt)
+
+            if stoppedAtTokenLimit {
+                errorMessage = assistantMessage.content.isEmpty
+                    ? "El modelo agotó el máximo de tokens razonando y no llegó a responder. Prueba «Directo» o sube el máximo en Generación."
+                    : "La respuesta se cortó al llegar al máximo de tokens."
+            }
+
+            // Only a clean turn with no reasoning leaves a KV cache worth
+            // continuing from: `ChatSession` appends every turn and never
+            // re-renders, so this turn's reasoning (or a half-finished turn)
+            // would stay in the context for the rest of the conversation,
+            // paid for in memory on every later turn, where the chat
+            // template itself would have dropped it. The next turn rebuilds
+            // from the saved transcript instead.
+            let hadReasoning = !(assistantMessage.reasoning ?? "").isEmpty
+            if hadReasoning || errorMessage != nil || Task.isCancelled {
+                await InferenceEngine.shared.invalidateSession(conversationID: conversationID)
+            }
 
             // A turn that produced nothing at all (failed load, immediate
             // cancel) would otherwise leave an empty bubble behind forever.

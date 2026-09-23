@@ -50,12 +50,15 @@ struct PersonalizeView: View {
                 }
             }
             // Written back on the way out rather than on every keystroke,
-            // same pattern as SettingsView's default system prompt.
+            // same pattern as SettingsView's default system prompt. The
+            // profile is part of every conversation's system prompt, which
+            // a live session bakes in — drop them all, as for skills.
             .onDisappear {
                 Personalization.name = name
                 Personalization.context = context
                 Personalization.preferences = preferences
                 Personalization.style = style
+                Task { await InferenceEngine.shared.invalidateAllSessions() }
             }
         }
     }

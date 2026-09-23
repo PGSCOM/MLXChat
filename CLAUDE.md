@@ -72,6 +72,16 @@ retains its container, so evicting a model drops its sessions too). Changing a
 conversation's model, its generation settings, or its thinking-effort level
 all call `invalidateSession(conversationID:)` — the session's parameters are
 baked in at construction, so there's no in-place update, only rebuild-next-turn.
+`ChatViewModel` also drops the session after any turn that reasoned or failed:
+mlx-swift-lm 3.31.4's `ChatSession` only ever appends to its KV cache, so that
+reasoning would otherwise ride along in the context for every later turn.
+
+Two more 3.31.4 quirks shape `InferenceEngine.session`: the system prompt is
+seeded as the first *history* message (`instructions` gets re-rendered and
+appended on every turn), and tools are only offered when
+`ModelCapabilityProbe.supportsTools` says the template can take a tool result
+back — `ChatSession` renders that `tool` message on its own, which Qwen3.5's
+template rejects with a Jinja `TemplateException`.
 
 Models load via `#huggingFaceLoadModelContainer` (a macro from
 `MLXHuggingFace`), which downloads through Hugging Face's `HubClient` into
@@ -163,8 +173,8 @@ each already brings its own `NavigationStack` and close button.
 ### The three callers of `InferenceEngine.streamResponse`
 
 - `ChatViewModel` (`Faro/Inference/`) — the in-app chat loop. Builds the
-  `HistoryTurn` array from `Conversation.messages`, threads thinking-effort
-  hints into the prompt/system-prompt, and owns the download/load status
+  `HistoryTurn` array from `Conversation.messages`, passes the thinking-effort
+  level to the chat template as `enable_thinking`, and owns the download/load status
   band shown while a model is fetched or paged in.
 - `APIServer` (`Faro/Server/`) — an OpenAI-compatible `/v1/chat/completions`
   + `/v1/models` server over `FlyingFox`, bearer-token gated, LAN-discoverable

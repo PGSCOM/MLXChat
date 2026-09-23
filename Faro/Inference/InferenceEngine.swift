@@ -39,12 +39,14 @@ actor InferenceEngine {
     /// Sessions carry the model they were built against — a session holds
     /// its container alive, so evicting a model has to take its sessions
     /// with it or nothing is actually freed.
-    private var sessions: [UUID: (modelID: String, session: ChatSession)] = [:]
-    /// Whether a model's chat template opens the reasoning block inside the
-    /// *prompt* (Qwen3.5 and kin), so the model's own output starts already
-    /// inside it and only ever emits the closing tag. Measured once per
-    /// load by rendering the template, never guessed from the repo id.
-    private var templateOpensThink: [String: Bool] = [:]
+    ///
+    /// `opensThink`: whether the session's chat template opens the reasoning
+    /// block inside the *prompt* (Qwen3.5 and kin), so the model's own
+    /// output starts already inside it and only ever emits the closing tag.
+    /// Measured per session by rendering the template, never guessed from
+    /// the repo id — the session's `enable_thinking` decides it, so the same
+    /// model can open the block or pre-close it.
+    private var sessions: [UUID: (modelID: String, session: ChatSession, opensThink: Bool)] = [:]
     private var configuredMemoryLimit = false
     /// Where tool-call start/finish events for the turn in flight go, per
     /// conversation. A session (and its baked-in `toolDispatch` closure) is
@@ -87,7 +89,6 @@ actor InferenceEngine {
             progressHandler: progress
         )
         containers = [modelID: container]
-        templateOpensThink = [modelID: await Self.promptOpensThink(container)]
         sessions = sessions.filter { $0.value.modelID == modelID }
         return container
     }
@@ -97,20 +98,22 @@ actor InferenceEngine {
     /// silently serving the now-orphaned in-memory copy.
     func evictContainer(modelID: String) {
         containers[modelID] = nil
-        templateOpensThink[modelID] = nil
         sessions = sessions.filter { $0.value.modelID != modelID }
     }
 
-    /// Renders the model's chat template for a throwaway turn and checks
-    /// whether the resulting prompt ends inside a still-open `<think>` —
-    /// true for templates that pre-inject the opening tag into the *prompt*
-    /// (Qwen3.5 and kin), so the model's own output only ever emits the
-    /// closing half.
-    private static func promptOpensThink(_ container: ModelContainer) async -> Bool {
+    /// Renders the model's chat template for a throwaway turn, with the
+    /// session's own `additionalContext`, and checks whether the resulting
+    /// prompt ends inside a still-open `<think>` — true for templates that
+    /// pre-inject the opening tag into the *prompt* (Qwen3.5 and kin), so
+    /// the model's own output only ever emits the closing half.
+    private static func promptOpensThink(
+        _ container: ModelContainer, additionalContext: [String: any Sendable]?
+    ) async -> Bool {
         let messages: [MLXLMCommon.Message] = [["role": "user", "content": "hola"]]
         let prompt = try? await container.perform { (context: ModelContext) -> String in
             context.tokenizer.decode(
-                tokenIds: try context.tokenizer.applyChatTemplate(messages: messages))
+                tokenIds: try context.tokenizer.applyChatTemplate(
+                    messages: messages, tools: nil, additionalContext: additionalContext))
         }
         guard let prompt else { return false }
         return Self.endsInsideThink(prompt)
@@ -169,14 +172,19 @@ actor InferenceEngine {
         systemPrompt: String,
         history: [HistoryTurn],
         settings: GenerationSettings,
+        enableThinking: Bool?,
         progress: @Sendable @escaping (Progress) -> Void
-    ) async throws -> ChatSession {
+    ) async throws -> (session: ChatSession, opensThink: Bool) {
         if let existing = sessions[conversationID], existing.modelID == modelID {
-            return existing.session
+            return (existing.session, existing.opensThink)
         }
         let container = try await loadContainer(modelID: modelID, progress: progress)
         let mcpTools = await MCPConnectionManager.shared.enabledToolSpecs()
-        let tools = SkillStore.toolSpecs() + mcpTools
+        // Offered only to a template that can take a tool's result back —
+        // otherwise the first tool call throws mid-answer. `nil` (template
+        // unreadable) keeps them.
+        let takesTools = ModelCapabilityProbe.onDisk(modelID: modelID)?.supportsTools != false
+        let tools: [ToolSpec] = takesTools ? SkillStore.toolSpecs() + mcpTools : []
 
         // Pulled out with explicit types: a ternary between `nil` and a
         // closure literal, inlined as a call argument, previously made
@@ -205,16 +213,24 @@ actor InferenceEngine {
                 }
             }
 
+        // The system prompt goes in as the first history message, not as
+        // `instructions`: `ChatSession` (mlx-swift-lm 3.31.4) renders
+        // `instructions` again on every turn and appends them to the KV
+        // cache, so the profile, skills and project documents would pile
+        // up once per turn. As history they're rendered exactly once.
+        let system: [Chat.Message] = systemPrompt.isEmpty ? [] : [.system(systemPrompt)]
+        let additionalContext: [String: any Sendable]? = enableThinking.map { ["enable_thinking": $0] }
         let session = ChatSession(
             container,
-            instructions: systemPrompt.isEmpty ? nil : systemPrompt,
-            history: chatMessages(from: history),
+            history: system + chatMessages(from: history),
             generateParameters: settings.makeParameters(),
+            additionalContext: additionalContext,
             tools: toolSpecs,
             toolDispatch: dispatch
         )
-        sessions[conversationID] = (modelID, session)
-        return session
+        let opensThink = await Self.promptOpensThink(container, additionalContext: additionalContext)
+        sessions[conversationID] = (modelID, session, opensThink)
+        return (session, opensThink)
     }
 
     /// Drops a conversation's live session (e.g. after clearing chat or
@@ -258,6 +274,7 @@ actor InferenceEngine {
         systemPrompt: String,
         history: [HistoryTurn],
         settings: GenerationSettings,
+        enableThinking: Bool? = nil,
         prompt: String,
         imageData: Data? = nil,
         progress: @Sendable @escaping (Progress) -> Void = { _ in }
@@ -272,13 +289,13 @@ actor InferenceEngine {
                 history: history, settings: settings, prompt: prompt, imageData: imageData
             )
         }
-        let session = try await session(
+        let (session, opensThink) = try await self.session(
             conversationID: conversationID, modelID: modelID,
             systemPrompt: systemPrompt, history: history, settings: settings,
-            progress: progress
+            enableThinking: enableThinking, progress: progress
         )
         let stream = session.streamDetails(to: prompt, images: Self.images(from: imageData))
-        guard templateOpensThink[modelID] == true else { return stream }
+        guard opensThink else { return stream }
         return Self.replayingOpenTag(stream)
     }
 }
