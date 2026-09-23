@@ -295,11 +295,15 @@ final class ChatViewModel {
 
             // A turn that produced nothing at all (failed load, immediate
             // cancel) would otherwise leave an empty bubble behind forever
-            // — fall back to whatever branch was active before it.
+            // — fall back to whatever branch was active before it. The live
+            // session may already hold this turn's prompt (and, after a
+            // relaunch, only the history up to it), so drop it: the next
+            // turn rebuilds from the branch actually on screen.
             if assistantMessage.content.isEmpty && (assistantMessage.reasoning ?? "").isEmpty {
                 conversation.messages.removeAll { $0.id == assistantMessage.id }
                 modelContext.delete(assistantMessage)
                 conversation.activeLeafID = MessageTree.latestLeaf(from: user, in: conversation.messages).id
+                await InferenceEngine.shared.invalidateSession(conversationID: conversationID)
             }
 
             streamingMessageID = nil
