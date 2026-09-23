@@ -38,6 +38,13 @@ final class ChatMessage {
     var attachmentName: String?
     var attachmentText: String?
     var conversation: Conversation?
+    /// JSON-encoded `[TurnStep]` — a stored string, not a relationship, so a
+    /// lightweight-migration default (`= "[]"`) is enough to add this to
+    /// existing conversations, same trick as `Skill` in `UserDefaults`.
+    /// `ToolCallRecord` (an earlier, flatter shape for this) never shipped
+    /// past this branch, so there's no on-device data in that format to
+    /// migrate — an empty default is the only fallback that matters.
+    var stepsRaw: String = "[]"
 
     init(
         role: MessageRole, content: String, reasoning: String? = nil, imageData: Data? = nil,
@@ -56,6 +63,25 @@ final class ChatMessage {
 
     var role: MessageRole {
         MessageRole(rawValue: roleRaw) ?? .user
+    }
+
+    /// The turn's steps (reasoning blocks and tool calls), in the order they
+    /// happened. A message saved before steps existed has none stored but
+    /// may still carry `reasoning` from back then — synthesized here as one
+    /// step covering all of it, so an old conversation renders exactly as
+    /// it always did instead of losing its reasoning card.
+    var steps: [TurnStep] {
+        get {
+            let decoded = (try? JSONDecoder().decode([TurnStep].self, from: Data(stepsRaw.utf8))) ?? []
+            guard decoded.isEmpty, let reasoning, !reasoning.isEmpty else { return decoded }
+            return [
+                TurnStep(
+                    kind: .reasoning(start: 0, end: reasoning.count), contentOffset: 0,
+                    startedAt: createdAt, seconds: reasoningSeconds
+                )
+            ]
+        }
+        set { stepsRaw = (try? String(data: JSONEncoder().encode(newValue), encoding: .utf8)) ?? "[]" }
     }
 
     /// What actually gets sent to the model: the attachment (if any)

@@ -105,6 +105,15 @@ struct ChatView: View {
                     Text(effort.label).tag(effort)
                 }
             }
+            // `nil` (not checked yet) leaves it enabled — only a confirmed
+            // `false` disables it, never a guess from the model's name.
+            .disabled(viewModel.capabilities?.supportsReasoning == false)
+            Picker("Estilo", selection: responseStyleBinding) {
+                Text("Predeterminado").tag(ResponseStyle?.none)
+                ForEach(ResponseStyle.allCases, id: \.self) { style in
+                    Text(style.label).tag(ResponseStyle?.some(style))
+                }
+            }
             Button {
                 showSettings = true
             } label: {
@@ -146,6 +155,13 @@ struct ChatView: View {
         Binding(
             get: { viewModel.conversation.thinkingEffort },
             set: { viewModel.setThinkingEffort($0) }
+        )
+    }
+
+    private var responseStyleBinding: Binding<ResponseStyle?> {
+        Binding(
+            get: { viewModel.conversation.responseStyle },
+            set: { viewModel.setResponseStyle($0) }
         )
     }
 
@@ -233,6 +249,10 @@ struct ChatView: View {
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: messages.last?.content) { scrollToBottom(proxy) }
             .onChange(of: messages.last?.reasoning) { scrollToBottom(proxy) }
+            // Steps only change at block boundaries (a tool card appearing,
+            // a reasoning block closing) — `reasoning` above already covers
+            // a block's own growth token by token.
+            .onChange(of: messages.last?.stepsRaw) { scrollToBottom(proxy) }
             .onChange(of: messages.count) { proxy.scrollTo("bottom", anchor: .bottom) }
         }
     }

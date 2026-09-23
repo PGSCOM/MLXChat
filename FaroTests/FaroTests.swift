@@ -8,7 +8,9 @@ import Testing
 struct ThinkTagSplitterTests {
     /// Feeds every chunk, then calls `finish()` (as the real stream
     /// consumer does once generation ends) and returns the combined delta.
-    /// Mirrors how `ChatViewModel` handles `contentWasReasoning`.
+    /// Mirrors how `ChatViewModel`/`APIServer`/`AskFaroIntent` handle
+    /// `contentWasReasoning`: reclaim only the reported suffix of the
+    /// accumulated content, not all of it.
     private func run(_ chunks: [String]) -> (reasoning: String, content: String) {
         var splitter = ThinkTagSplitter()
         var reasoning = ""
@@ -16,8 +18,9 @@ struct ThinkTagSplitterTests {
         for chunk in chunks {
             let delta = splitter.consume(chunk)
             if delta.contentWasReasoning {
-                reasoning += content
-                content = ""
+                let cut = content.index(content.endIndex, offsetBy: -delta.reclaimedContentLength)
+                reasoning += content[cut...]
+                content = String(content[..<cut])
             }
             reasoning += delta.reasoning
             content += delta.content
@@ -100,6 +103,51 @@ struct ThinkTagSplitterTests {
         let delta = splitter.consume("respuesta")
         #expect(delta.content == "respuesta")
         #expect(!delta.contentWasReasoning)
+    }
+
+    /// Text written right before a tool call ("Voy a llamar a una
+    /// herramienta.") must survive as content even when the *next* block
+    /// reopens implicitly — `TurnRecorder.toolStarted` calls this exactly at
+    /// the call boundary so the next implicit close doesn't sweep it up.
+    @Test func commitContentPreventsThePreCallTextFromBeingReclaimed() {
+        var splitter = ThinkTagSplitter()
+        _ = splitter.consume("razono</think>Voy a llamar a una herramienta.")
+        splitter.commitContent()
+        let delta = splitter.consume("nueva razón</think>final")
+        #expect(!delta.contentWasReasoning)
+        #expect(delta.reasoning == "nueva razón")
+        #expect(delta.content == "final")
+    }
+
+    /// A reasoning model that calls a tool mid-turn: `InferenceEngine`
+    /// resolves the call inside `ChatSession` and only streams the clean
+    /// continuation onward, but if that continuation's chat template also
+    /// pre-opens `<think>` (as Qwen3-style templates do for every
+    /// generation prompt, not just the first), the model's second segment
+    /// arrives with no literal `<think>` either — same shape as the very
+    /// first implicit block, split across chunks the way real streaming
+    /// does it.
+    @Test func recoversASecondImplicitlyOpenedBlockAfterATheoreticalToolCall() {
+        let result = run(["primero</think>", "lue", "go</think>final"])
+        #expect(result.reasoning == "primeroluego")
+        #expect(result.content == "final")
+    }
+
+    /// The sibling bug the fix above could introduce if reclaiming moved
+    /// *everything* accumulated instead of just the current block's own
+    /// leaked tail: "X" is real content, protected from the later implicit
+    /// block's reclaim by an EXPLICIT block ("Y") that closed in between —
+    /// that close resets the leak counter without touching "X", so only
+    /// "Z" (leaked after it, before the next bare `</think>`) gets pulled
+    /// into reasoning. (A bare `</think>` immediately after real content
+    /// with no other close in between — e.g. real text written right
+    /// before a tool call, then the model reasons again with no explicit
+    /// tag — is NOT distinguishable from this splitter's text stream alone;
+    /// see the note on `ThinkTagSplitter.consume`.)
+    @Test func laterImplicitBlockDoesNotSweepUpContentProtectedByAnEarlierExplicitBlock() {
+        let result = run(["uno</think>", "X", "<think>Y</think>", "Z", "reasoning</think>final"])
+        #expect(result.reasoning == "unoYZreasoning")
+        #expect(result.content == "Xfinal")
     }
 }
 
@@ -299,6 +347,328 @@ struct ReasoningCardTests {
     }
 }
 
+struct ArtifactParserTests {
+    @Test func shortCodeBlockStaysInline() {
+        let content = "texto\n```swift\nlet x = 1\n```\nfin"
+        let segments = ArtifactParser.segments(content)
+        #expect(segments.count == 1)
+        if case .text(_, let text) = segments.first { #expect(text == content) } else { Issue.record("expected text") }
+    }
+
+    @Test func longCodeBlockIsPromoted() {
+        let body = (1...10).map { "línea \($0)" }.joined(separator: "\n")
+        let content = "antes\n```swift\n\(body)\n```\ndespués"
+        let segments = ArtifactParser.segments(content)
+        #expect(segments.count == 3)
+        guard case .artifact(let artifact) = segments[1] else {
+            Issue.record("expected artifact")
+            return
+        }
+        #expect(artifact.language == "swift")
+        #expect(artifact.content == body)
+    }
+
+    @Test func htmlIsPromotedRegardlessOfLength() {
+        let content = "```html\n<p>hola</p>\n```"
+        let segments = ArtifactParser.segments(content)
+        #expect(segments.count == 1)
+        guard case .artifact(let artifact) = segments.first else {
+            Issue.record("expected artifact")
+            return
+        }
+        #expect(artifact.isPreviewable)
+        #expect(artifact.fileExtension == "html")
+    }
+
+    @Test func unclosedFenceStaysAsText() {
+        let content = "algo\n```swift\nsin cerrar"
+        let segments = ArtifactParser.segments(content)
+        #expect(segments.count == 1)
+        if case .text(_, let text) = segments.first { #expect(text == content) } else { Issue.record("expected text") }
+    }
+
+    @Test func titleComesFromTheInfoStringWhenPresent() {
+        let content = "```swift Ordenar.swift\n" + (1...9).map(String.init).joined(separator: "\n") + "\n```"
+        let segments = ArtifactParser.segments(content)
+        guard case .artifact(let artifact) = segments.first else {
+            Issue.record("expected artifact")
+            return
+        }
+        #expect(artifact.title == "Ordenar.swift")
+    }
+
+    @Test func reassemblingSegmentsReproducesTheOriginalContent() {
+        let body = (1...10).map { "línea \($0)" }.joined(separator: "\n")
+        let content = "intro\n\n```html\n\(body)\n```\n\ncierre"
+        let segments = ArtifactParser.segments(content)
+        let rebuilt = segments.map { segment -> String in
+            switch segment {
+            case .text(_, let text): return text
+            case .artifact(let artifact): return "```\(artifact.language)\n\(artifact.content)\n```"
+            }
+        }.joined(separator: "\n")
+        #expect(rebuilt == content)
+    }
+}
+
+// Serialized: every test in this suite reads and writes the same
+// `UserDefaults` key, and Swift Testing otherwise runs them concurrently.
+@Suite(.serialized)
+struct SkillStoreTests {
+    private func withCleanStore(_ body: () -> Void) {
+        let saved = SkillStore.all
+        SkillStore.all = []
+        defer { SkillStore.all = saved }
+        body()
+    }
+
+    @Test func toolNameIsSanitizedAndPrefixed() {
+        let skill = Skill(name: "Revisión de código!", summary: "", instructions: "")
+        #expect(skill.toolName == "skill_revisión_de_código_")
+    }
+
+    @Test func instructionsOnlyRouteAutomaticSkills() {
+        withCleanStore {
+            let automatic = Skill(name: "Auto", summary: "s", instructions: "haz A", mode: .automatic)
+            let always = Skill(name: "Always", summary: "s", instructions: "haz B", mode: .always)
+            SkillStore.all = [automatic, always]
+
+            #expect(SkillStore.instructions(forTool: automatic.toolName) == "haz A")
+            #expect(SkillStore.instructions(forTool: always.toolName) == nil)
+        }
+    }
+
+    @Test func alwaysOnAndToolSpecsPartitionByMode() {
+        withCleanStore {
+            let automatic = Skill(name: "Auto", summary: "s", instructions: "haz A", mode: .automatic)
+            let always = Skill(name: "Always", summary: "s", instructions: "haz B", mode: .always)
+            let off = Skill(name: "Off", summary: "s", instructions: "haz C", mode: .off)
+            SkillStore.all = [automatic, always, off]
+
+            #expect(SkillStore.alwaysOnInstructions() == "haz B")
+            #expect(SkillStore.toolSpecs().count == 1)
+        }
+    }
+
+    @Test func parsesFrontmatterFromASkillMarkdownFile() {
+        let text = """
+        ---
+        name: Revisión
+        description: Revisa código en busca de bugs
+        ---
+        Instrucciones aquí.
+        """
+        let skill = SkillStore.parse(skillMarkdown: text, fallbackName: "fallback")
+        #expect(skill.name == "Revisión")
+        #expect(skill.summary == "Revisa código en busca de bugs")
+        #expect(skill.instructions == "Instrucciones aquí.")
+    }
+
+    @Test func fallsBackToPlainTextWithoutFrontmatter() {
+        let skill = SkillStore.parse(skillMarkdown: "solo instrucciones", fallbackName: "Mi skill")
+        #expect(skill.name == "Mi skill")
+        #expect(skill.instructions == "solo instrucciones")
+    }
+}
+
+// Serialized: same reason as `SkillStoreTests` — shared `UserDefaults` state.
+@Suite(.serialized)
+struct PersonalizationTests {
+    @Test func emptyProfileAndNormalStyleProduceAnEmptyPreamble() {
+        let saved = (Personalization.name, Personalization.context, Personalization.preferences)
+        Personalization.name = ""
+        Personalization.context = ""
+        Personalization.preferences = ""
+        defer {
+            Personalization.name = saved.0
+            Personalization.context = saved.1
+            Personalization.preferences = saved.2
+        }
+        #expect(Personalization.preamble(style: .normal).isEmpty)
+    }
+
+    @Test func filledProfileProducesLines() {
+        let saved = (Personalization.name, Personalization.context, Personalization.preferences)
+        Personalization.name = "Ada"
+        Personalization.context = ""
+        Personalization.preferences = ""
+        defer {
+            Personalization.name = saved.0
+            Personalization.context = saved.1
+            Personalization.preferences = saved.2
+        }
+        #expect(Personalization.preamble(style: .conciso) == "El usuario se llama Ada.\nResponde de forma breve y directa, sin rodeos.")
+    }
+}
+
+struct ToolCallRecordTests {
+    @Test func statusRoundTripsThroughJSON() throws {
+        let calls = [
+            ToolCallRecord(id: UUID(), name: "tavily_search", isSkill: false, status: .running),
+            ToolCallRecord(id: UUID(), name: "Revisión de código", isSkill: true, status: .succeeded(preview: "ok")),
+            ToolCallRecord(id: UUID(), name: "tavily_search", isSkill: false, status: .failed("timeout")),
+        ]
+        let data = try JSONEncoder().encode(calls)
+        let decoded = try JSONDecoder().decode([ToolCallRecord].self, from: data)
+        #expect(decoded == calls)
+    }
+
+    @Test func chatMessageDefaultsToNoSteps() {
+        let message = ChatMessage(role: .assistant, content: "")
+        #expect(message.steps.isEmpty)
+    }
+
+    @Test func chatMessageStepsRoundTripThroughTheStoredRawString() {
+        let message = ChatMessage(role: .assistant, content: "")
+        let id = UUID()
+        let record = ToolCallRecord(id: id, name: "search_web", isSkill: false, status: .running)
+        message.steps = [TurnStep(id: id, kind: .tool(record), contentOffset: 0)]
+        guard case .tool(let stored) = message.steps[0].kind else {
+            Issue.record("esperaba un paso de herramienta")
+            return
+        }
+        #expect(stored == record)
+
+        var steps = message.steps
+        guard case .tool(var updated) = steps[0].kind else {
+            Issue.record("esperaba un paso de herramienta")
+            return
+        }
+        updated.status = .succeeded(preview: "3 resultados")
+        steps[0].kind = .tool(updated)
+        message.steps = steps
+        guard case .tool(let final) = message.steps[0].kind else {
+            Issue.record("esperaba un paso de herramienta")
+            return
+        }
+        #expect(final.status == .succeeded(preview: "3 resultados"))
+    }
+
+    @Test func argumentsSummaryJoinsKeysAlphabetically() {
+        let record = ToolCallRecord(
+            id: UUID(), name: "tavily_search", isSkill: false, status: .running,
+            arguments: #"{"query":"bitcoin","max_results":5}"#
+        )
+        #expect(record.argumentsSummary == "max_results: 5 · query: bitcoin")
+    }
+
+    @Test func argumentsSummaryIsNilWithoutArguments() {
+        let record = ToolCallRecord(id: UUID(), name: "tavily_search", isSkill: false, status: .running)
+        #expect(record.argumentsSummary == nil)
+    }
+
+    @Test func legacyMessageWithOnlyReasoningSynthesizesOneStep() {
+        // Messages saved before steps existed (any conversation from
+        // `master`) have `reasoning` but no `stepsRaw` — they must still
+        // render their reasoning card instead of losing it.
+        let message = ChatMessage(role: .assistant, content: "Respuesta", reasoning: "pensé esto")
+        message.reasoningSeconds = 4.5
+        #expect(message.steps.count == 1)
+        guard case .reasoning(let start, let end) = message.steps[0].kind else {
+            Issue.record("esperaba un paso de razonamiento")
+            return
+        }
+        #expect(start == 0)
+        #expect(end == "pensé esto".count)
+        #expect(message.steps[0].seconds == 4.5)
+    }
+}
+
+/// `TurnRecorder` is where a raw stream turns into `message.content` /
+/// `message.reasoning` plus the ordered steps the UI replays — these check
+/// the ordering directly through `TurnStep.timeline`, the same read the
+/// chat bubble does.
+struct TurnRecorderTests {
+    @Test @MainActor func recordsReasoningToolReasoningAnswerInOrder() {
+        let message = ChatMessage(role: .assistant, content: "")
+        let recorder = TurnRecorder(message: message)
+        _ = recorder.consume("<think>plan</think>")
+        let call = ToolCallRecord(id: UUID(), name: "tavily_search", isSkill: false, status: .running)
+        recorder.toolStarted(call)
+        recorder.toolFinished(id: call.id, status: .succeeded(preview: "3 resultados"))
+        _ = recorder.consume("<think>otra</think>Respuesta")
+        recorder.finish()
+
+        #expect(message.content == "Respuesta")
+        let timeline = TurnStep.timeline(content: message.content, reasoning: message.reasoning ?? "", steps: message.steps)
+        #expect(timeline.count == 4)
+        guard case .step(_, let firstReasoning) = timeline[0] else {
+            Issue.record("esperaba razonamiento")
+            return
+        }
+        #expect(firstReasoning == "plan")
+        guard case .step(let toolStep, _) = timeline[1], case .tool(let record) = toolStep.kind else {
+            Issue.record("esperaba una herramienta")
+            return
+        }
+        #expect(record.status == .succeeded(preview: "3 resultados"))
+        guard case .step(_, let secondReasoning) = timeline[2] else {
+            Issue.record("esperaba razonamiento")
+            return
+        }
+        #expect(secondReasoning == "otra")
+        guard case .text(let text) = timeline[3] else {
+            Issue.record("esperaba texto")
+            return
+        }
+        #expect(text == "Respuesta")
+    }
+
+    /// `toolStarted` draws an explicit segment boundary so text written
+    /// right before the call ("Voy a buscar.") survives as content instead
+    /// of being swept up when the post-tool reasoning reopens implicitly.
+    @Test @MainActor func toolStartCommitsPendingContentBeforeTheNextImplicitBlock() {
+        let message = ChatMessage(role: .assistant, content: "")
+        let recorder = TurnRecorder(message: message)
+        _ = recorder.consume("Voy a buscar.")
+        let call = ToolCallRecord(id: UUID(), name: "tavily_search", isSkill: false, status: .running)
+        recorder.toolStarted(call)
+        recorder.toolFinished(id: call.id, status: .succeeded(preview: "ok"))
+        _ = recorder.consume("pienso</think>Listo")
+        recorder.finish()
+
+        #expect(message.content == "Voy a buscar.Listo")
+        let timeline = TurnStep.timeline(content: message.content, reasoning: message.reasoning ?? "", steps: message.steps)
+        #expect(timeline.count == 4)
+        guard case .text(let first) = timeline[0] else {
+            Issue.record("esperaba texto")
+            return
+        }
+        #expect(first == "Voy a buscar.")
+        guard case .step(let toolStep, _) = timeline[1], case .tool = toolStep.kind else {
+            Issue.record("esperaba una herramienta")
+            return
+        }
+        guard case .step(_, let reasoning) = timeline[2] else {
+            Issue.record("esperaba razonamiento")
+            return
+        }
+        #expect(reasoning == "pienso")
+        guard case .text(let last) = timeline[3] else {
+            Issue.record("esperaba texto")
+            return
+        }
+        #expect(last == "Listo")
+    }
+
+    /// A cancellation can land between a tool call starting and its own
+    /// `.finished` event arriving — `finish()` is the safety net that keeps
+    /// the card from spinning forever.
+    @Test @MainActor func finishFailsAToolCallStillRunning() {
+        let message = ChatMessage(role: .assistant, content: "")
+        let recorder = TurnRecorder(message: message)
+        let call = ToolCallRecord(id: UUID(), name: "tavily_search", isSkill: false, status: .running)
+        recorder.toolStarted(call)
+        recorder.finish()
+
+        guard case .tool(let record) = message.steps[0].kind else {
+            Issue.record("esperaba una herramienta")
+            return
+        }
+        #expect(record.status == .failed("Cancelada"))
+    }
+}
+
 struct ProjectContextTests {
     @Test func isEmptyWithNoInstructionsAndNoDocuments() {
         let project = Project(name: "Sin nada")
@@ -341,6 +711,124 @@ struct ProjectContextTests {
     @Test func conversationWithoutAProjectKeepsJustItsOwnPrompt() {
         let conversation = Conversation(modelID: "mlx-community/test", systemPrompt: "Sé breve.")
         #expect(conversation.effectiveSystemPrompt == "Sé breve.")
+    }
+}
+
+/// Pure composition logic only — `ModelPreflight.check` itself needs the
+/// network, so it isn't covered here.
+struct PreflightResultTests {
+    @Test func noWarningsWhenEverythingChecksOut() {
+        var result = PreflightResult()
+        result.hasConfig = true
+        result.hasWeights = true
+        result.hasTokenizer = true
+        result.capabilities = .init(supportsTools: true, supportsReasoning: true)
+        #expect(result.softWarnings.isEmpty)
+    }
+
+    @Test func unknownCapabilityIsNotAWarning() {
+        // A failed probe fetch (nil) must not read as "confirmed unsupported".
+        var result = PreflightResult()
+        result.hasConfig = true
+        result.hasWeights = true
+        result.hasTokenizer = true
+        #expect(result.softWarnings.isEmpty)
+    }
+
+    @Test func flagsEachConfirmedGapSeparately() {
+        var result = PreflightResult()
+        result.hasConfig = true
+        result.hasWeights = true
+        result.hasTokenizer = true
+        result.fitsRecommendedMemory = false
+        result.capabilities = .init(supportsTools: false, supportsReasoning: false)
+        #expect(result.softWarnings.count == 3)
+    }
+}
+
+/// Fragments taken verbatim from real `mlx-community` chat templates —
+/// the exact three cases a naive `contains("<think>")` gets backwards (see
+/// the `ponytail:`-adjacent doc comments on `ModelCapabilityProbe`).
+struct ModelCapabilityProbeTests {
+    @Test func rejectsThinkInsideAHistoryRewriteConcatenation() {
+        // Qwen3-4B-Instruct-2507: doesn't reason, but its template mentions
+        // `<think>` only while stripping it back out of a prior turn.
+        let template = #"""
+            {%- if '</think>' in content %}
+                {%- set reasoning_content = content.split('</think>')[0].rstrip('\n').split('<think>')[-1].lstrip('\n') %}
+                {%- set content = content.split('</think>')[-1].lstrip('\n') %}
+            {%- endif %}
+            {{- '<|im_start|>' + message.role + '\n<think>\n' + reasoning_content.strip('\n') + '\n</think>\n\n' + content.lstrip('\n') }}
+            """#
+        #expect(ModelCapabilityProbe.supportsReasoning(chatTemplate: template) == false)
+    }
+
+    @Test func acceptsThinkEmittedAsALiteral() {
+        // Qwen3-4B-Thinking-2507: the generation prompt opens `<think>` for
+        // the model to write into.
+        let template = #"{%- if add_generation_prompt %}{{- '<|im_start|>assistant\n<think>\n' }}{%- endif %}"#
+        #expect(ModelCapabilityProbe.supportsReasoning(chatTemplate: template) == true)
+    }
+
+    @Test func acceptsEnableThinkingEvenWhenTheRenderInjectsNothing() {
+        // Qwen3-1.7B/8B: with thinking left on (the default), the hybrid
+        // template's rendered *prompt* injects nothing extra — a render-and-
+        // check misses this the same way `contains("<think>")` on the raw
+        // source does with thinking explicitly off.
+        let template = #"""
+            {%- if enable_thinking is defined and enable_thinking is false %}
+                {{- '<think>\n\n</think>\n\n' }}
+            {%- endif %}
+            """#
+        #expect(ModelCapabilityProbe.supportsReasoning(chatTemplate: template) == true)
+    }
+
+    @Test func neitherToolsNorThinkOnAPlainTemplate() {
+        // Gemma 3: no `tools`, no `<think>`, anywhere.
+        let template = "{%- for message in messages %}{{- message.content }}{%- endfor %}"
+        #expect(ModelCapabilityProbe.supportsTools(chatTemplate: template) == false)
+        #expect(ModelCapabilityProbe.supportsReasoning(chatTemplate: template) == false)
+    }
+
+    @Test func toolsWithoutReasoning() {
+        // Llama 3.2: calls tools, never reasons.
+        let template = "{%- if tools %}{{- 'Tools available' }}{%- endif %}"
+        #expect(ModelCapabilityProbe.supportsTools(chatTemplate: template) == true)
+        #expect(ModelCapabilityProbe.supportsReasoning(chatTemplate: template) == false)
+    }
+
+    @Test func toolsOnlyMentionedInPrintedTextDontCount() {
+        // SmolLM3: prints `<tools>` but reads its list from `xml_tools`, so
+        // a `tools` list handed to it never reaches the model.
+        let template = #"{%- if xml_tools %}{{- 'function signatures within <tools></tools> XML tags' }}{%- endif %}"#
+        #expect(ModelCapabilityProbe.supportsTools(chatTemplate: template) == false)
+    }
+
+    @Test func rejectsATemplateThatRefusesAToolResultOnItsOwn() {
+        // Qwen3.5: reads `tools`, but throws when rendered without a user
+        // message — which is how `ChatSession` hands a tool's result back.
+        let template = #"""
+            {%- if tools %}{{- '<|im_start|>system\n# Tools' }}{%- endif %}
+            {%- if ns.multi_step_tool %}
+                {{- raise_exception('No user query found in messages.') }}
+            {%- endif %}
+            """#
+        #expect(ModelCapabilityProbe.supportsTools(chatTemplate: template) == false)
+    }
+
+    @Test func chatTemplateReadsThePlainStringForm() {
+        let data = #"{"chat_template": "{{ messages }}"}"#.data(using: .utf8)!
+        #expect(ModelCapabilityProbe.chatTemplate(fromTokenizerConfigData: data) == "{{ messages }}")
+    }
+
+    @Test func chatTemplateJoinsTheMultiTemplateListForm() {
+        // Hugging Face's multi-template format: a list of named variants
+        // instead of one plain string.
+        let data = #"{"chat_template": [{"name": "default", "template": "{{ a }}"}, {"name": "tool_use", "template": "{{ b }}"}]}"#
+            .data(using: .utf8)!
+        let result = ModelCapabilityProbe.chatTemplate(fromTokenizerConfigData: data)
+        #expect(result?.contains("{{ a }}") == true)
+        #expect(result?.contains("{{ b }}") == true)
     }
 }
 

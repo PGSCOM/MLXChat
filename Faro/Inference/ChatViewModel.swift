@@ -10,6 +10,7 @@ enum TurnPhase: Equatable, Sendable {
     case idle
     case preparing
     case thinking
+    case usingTool
     case writing
 }
 
@@ -24,6 +25,12 @@ final class ChatViewModel {
     private(set) var phaseStartedAt = Date()
     /// The assistant message being streamed right now, if any.
     private(set) var streamingMessageID: UUID?
+    /// What the current model can actually do — `nil` until its on-disk chat
+    /// template has been read (right away, at `init` and on every model
+    /// switch — no need to wait for the model to load, or even for a first
+    /// turn). Drives the UI disabling controls that wouldn't do anything for
+    /// this model, instead of guessing from its repo id.
+    private(set) var capabilities: ModelCapabilityProbe.Capabilities?
     var errorMessage: String?
     var draft = ""
     private(set) var pendingAttachment: ExtractedAttachment?
@@ -55,6 +62,7 @@ final class ChatViewModel {
     init(conversation: Conversation, modelContext: SwiftData.ModelContext) {
         self.conversation = conversation
         self.modelContext = modelContext
+        refreshCapabilities()
 
         // First open under branching: thread the old flat history into one
         // chain and point the active leaf at its end. A conversation with
@@ -224,12 +232,14 @@ final class ChatViewModel {
         let conversationID = conversation.id
         let turnID = assistantMessage.id
         let effort = conversation.thinkingEffort
-        // The hint text goes to the model only — the saved/shown user
-        // message stays clean.
-        let systemPrompt = [conversation.effectiveSystemPrompt, effort.systemHint]
-            .filter { !$0.isEmpty }.joined(separator: "\n")
-        let promptForModel = user.promptText + effort.promptSuffix
+        let style = conversation.responseStyle ?? Personalization.style
+        let systemPrompt = [
+            Personalization.preamble(style: style),
+            SkillStore.alwaysOnInstructions(),
+            conversation.effectiveSystemPrompt,
+        ].filter { !$0.isEmpty }.joined(separator: "\n\n")
         let settings = conversation.effectiveGenerationSettings
+        let prompt = user.promptText
         let imageData = user.imageData
 
         let downloadCoordinator = ModelDownloadCoordinator.shared
@@ -245,14 +255,34 @@ final class ChatViewModel {
             if freshSession {
                 await InferenceEngine.shared.invalidateSession(conversationID: conversationID)
             }
-            var splitter = ThinkTagSplitter()
-            let streamStartedAt = Date()
-            var reasoningStartedAt: Date?
+            let recorder = TurnRecorder(message: assistantMessage)
+            var stoppedAtTokenLimit = false
+            // Registered before the stream starts, so a tool call on the
+            // very first turn isn't missed. Runs concurrently with the
+            // generation loop below rather than as a callback threaded
+            // through the actor boundary, since it mutates `assistantMessage`
+            // (a SwiftData model, not `Sendable`) directly — safe here
+            // because this nested task, like the outer one, inherits this
+            // method's MainActor isolation.
+            let toolCallTask = Task {
+                for await event in await InferenceEngine.shared.toolCallEvents(conversationID: conversationID) {
+                    switch event {
+                    case .started(let record):
+                        recorder.toolStarted(record)
+                        enter(.usingTool)
+                    case .finished(let id, let status):
+                        recorder.toolFinished(id: id, status: status)
+                        enter(.thinking)
+                    }
+                }
+            }
+            defer { toolCallTask.cancel() }
             do {
                 let stream = try await InferenceEngine.shared.streamResponse(
                     conversationID: conversationID, modelID: modelID,
                     systemPrompt: systemPrompt, history: history,
-                    settings: settings, prompt: promptForModel, imageData: imageData,
+                    settings: settings, enableThinking: effort.enableThinking,
+                    prompt: prompt, imageData: imageData,
                     progress: { value in
                         // `.shared` referenced inside the hop, not captured
                         // by this `@Sendable` closure, since the coordinator
@@ -266,31 +296,14 @@ final class ChatViewModel {
                 for try await generation in stream {
                     switch generation {
                     case .chunk(let piece):
-                        let delta = splitter.consume(piece)
-                        if delta.contentWasReasoning {
-                            // A bare `</think>` arrived: what already
-                            // streamed into the bubble was the model
-                            // thinking out loud, so move it.
-                            assistantMessage.reasoning =
-                                (assistantMessage.reasoning ?? "") + assistantMessage.content
-                            assistantMessage.content = ""
-                            reasoningStartedAt = reasoningStartedAt ?? streamStartedAt
-                        }
-                        if !delta.reasoning.isEmpty {
-                            if reasoningStartedAt == nil { reasoningStartedAt = .now }
-                            if phase != .writing { enter(.thinking) }
-                            assistantMessage.reasoning = (assistantMessage.reasoning ?? "") + delta.reasoning
-                        }
-                        if !delta.content.isEmpty {
-                            closeReasoning(on: assistantMessage, startedAt: reasoningStartedAt)
-                            enter(.writing)
-                            assistantMessage.content += delta.content
-                        }
+                        if let phase = recorder.consume(piece) { enter(phase) }
                     case .info(let info):
                         assistantMessage.tokensPerSecond = info.tokensPerSecond
+                        stoppedAtTokenLimit = info.stopReason == .length
                     default:
                         // Tool calls are resolved inside ChatSession itself
-                        // (see InferenceEngine); nothing else reaches here.
+                        // (see InferenceEngine) and reported separately via
+                        // `toolCallTask` above; nothing else reaches here.
                         break
                     }
                 }
@@ -302,15 +315,27 @@ final class ChatViewModel {
             downloadCoordinator.finishLoad(id: modelID)
 
             // Whatever the splitter was still holding back as possible
-            // tag-boundary lookahead is now final — release it.
-            let tail = splitter.finish()
-            if !tail.reasoning.isEmpty {
-                assistantMessage.reasoning = (assistantMessage.reasoning ?? "") + tail.reasoning
+            // tag-boundary lookahead is now final — release it, and fail
+            // any tool call a cancellation caught mid-flight.
+            recorder.finish()
+
+            if stoppedAtTokenLimit {
+                errorMessage = assistantMessage.content.isEmpty
+                    ? "El modelo agotó el máximo de tokens razonando y no llegó a responder. Prueba «Directo» o sube el máximo en Generación."
+                    : "La respuesta se cortó al llegar al máximo de tokens."
             }
-            if !tail.content.isEmpty {
-                assistantMessage.content += tail.content
+
+            // Only a clean turn with no reasoning leaves a KV cache worth
+            // continuing from: `ChatSession` appends every turn and never
+            // re-renders, so this turn's reasoning (or a half-finished turn)
+            // would stay in the context for the rest of the conversation,
+            // paid for in memory on every later turn, where the chat
+            // template itself would have dropped it. The next turn rebuilds
+            // from the saved transcript instead.
+            let hadReasoning = !(assistantMessage.reasoning ?? "").isEmpty
+            if hadReasoning || errorMessage != nil || Task.isCancelled {
+                await InferenceEngine.shared.invalidateSession(conversationID: conversationID)
             }
-            closeReasoning(on: assistantMessage, startedAt: reasoningStartedAt)
 
             // A turn that produced nothing at all (failed load, immediate
             // cancel) would otherwise leave an empty bubble behind forever
@@ -318,7 +343,9 @@ final class ChatViewModel {
             // session may already hold this turn's prompt (and, after a
             // relaunch, only the history up to it), so drop it: the next
             // turn rebuilds from the branch actually on screen.
-            if assistantMessage.content.isEmpty && (assistantMessage.reasoning ?? "").isEmpty {
+            if assistantMessage.content.isEmpty && (assistantMessage.reasoning ?? "").isEmpty
+                && assistantMessage.steps.isEmpty
+            {
                 conversation.messages.removeAll { $0.id == assistantMessage.id }
                 modelContext.delete(assistantMessage)
                 conversation.activeLeafID = MessageTree.latestLeaf(from: user, in: conversation.messages).id
@@ -356,6 +383,13 @@ final class ChatViewModel {
         invalidateSession()
     }
 
+    func setResponseStyle(_ style: ResponseStyle?) {
+        guard style != conversation.responseStyle else { return }
+        conversation.responseStyle = style
+        try? modelContext.save()
+        invalidateSession()
+    }
+
     func changeModel(to modelID: String) {
         guard modelID != conversation.modelID else { return }
         conversation.modelID = modelID
@@ -364,6 +398,21 @@ final class ChatViewModel {
         AppSettings.lastModelID = modelID
         try? modelContext.save()
         invalidateSession()
+        refreshCapabilities()
+    }
+
+    /// Reads the new model's chat template off disk — not from the running
+    /// container, so this doesn't wait for a load. `nil` while in flight (and
+    /// for a model that was picked but never downloaded — there's nothing on
+    /// disk to read yet) rather than showing the previous model's answer.
+    private func refreshCapabilities() {
+        let modelID = conversation.modelID
+        capabilities = nil
+        Task {
+            capabilities = await Task.detached(priority: .utility) {
+                ModelCapabilityProbe.onDisk(modelID: modelID)
+            }.value
+        }
     }
 
     /// Called when the generation-settings sheet is dismissed: the live
@@ -378,11 +427,6 @@ final class ChatViewModel {
         guard phase != newPhase else { return }
         phase = newPhase
         phaseStartedAt = .now
-    }
-
-    private func closeReasoning(on message: ChatMessage, startedAt: Date?) {
-        guard let startedAt, message.reasoningSeconds == nil else { return }
-        message.reasoningSeconds = Date().timeIntervalSince(startedAt)
     }
 
     /// The sidebar is useless when every row reads "Nueva conversación",

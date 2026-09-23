@@ -75,13 +75,14 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGN_ENTITLEMENTS=""
 
+      # Exact path, never a search: a restored DerivedData cache can also hold
+      # a simulator build (Debug-iphonesimulator/Faro.app), and packaging that
+      # one gives an .ipa that won't launch on a device.
       - name: Locate built app
         run: |
-          # The exact device build, never whichever Faro.app `find` hits
-          # first: a restored cache can hold a simulator one too.
           APP_PATH=DerivedData/Build/Products/Release-iphoneos/Faro.app
           if [ ! -d "$APP_PATH" ]; then
-            echo "::error::$APP_PATH not found"
+            echo "::error::Faro.app not found at $APP_PATH"
             find DerivedData/Build/Products -maxdepth 2
             exit 1
           fi

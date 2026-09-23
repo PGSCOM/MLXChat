@@ -25,14 +25,19 @@ final class ModelDownloadCoordinator {
 
     private(set) var status: [String: ModelLoadStatus] = [:]
     private(set) var errors: [String: String] = [:]
-    /// Preflight said the weights probably don't fit this device's
-    /// recommended working set. Not fatal — the recommendation is
-    /// conservative — so it's shown and the download continues.
+    /// Preflight's soft findings (`PreflightResult.softWarnings`) — memory
+    /// fit, tool-calling, reasoning. None of them are fatal (the memory
+    /// figure is conservative, the capability checks read a small probe
+    /// file rather than the model actually running), so this is shown
+    /// before the download and the download continues regardless.
     private(set) var warnings: [String: String] = [:]
 
     /// Last raw sample per model, to derive a smoothed transfer rate — a
     /// lone `fractionCompleted` reading says nothing about speed.
     private var lastSample: [String: (date: Date, bytes: Int64)] = [:]
+    /// The in-flight download Task per model, so `cancel(id:)` has
+    /// something to cancel.
+    private var tasks: [String: Task<Void, Never>] = [:]
 
     func download(id: String) {
         guard status[id] == nil else { return }
@@ -40,7 +45,7 @@ final class ModelDownloadCoordinator {
         warnings[id] = nil
         beginLoad(id: id)
 
-        Task {
+        tasks[id] = Task {
             do {
                 let preflight = try await ModelPreflight.check(repoID: id)
                 guard preflight.isCompatible else {
@@ -48,18 +53,44 @@ final class ModelDownloadCoordinator {
                     status[id] = nil
                     return
                 }
-                if !preflight.fitsRecommendedMemory { warnings[id] = preflight.summary }
+                let combined = preflight.softWarnings.joined(separator: " · ")
+                if !combined.isEmpty { warnings[id] = combined.prefix(1).uppercased() + combined.dropFirst() }
                 _ = try await InferenceEngine.shared.loadContainer(modelID: id) { [weak self] value in
                     Task { @MainActor in self?.record(id: id, value: value) }
                 }
                 status[id] = nil
                 lastSample[id] = nil
             } catch {
+                // A cancelled download isn't a failure — `cancel(id:)`
+                // already reset the row itself, so don't overlay a spurious
+                // error message on top of that (the underlying fetch can
+                // surface cancellation as `CancellationError` or, from
+                // URLSession, `URLError.cancelled` — `Task.isCancelled`
+                // catches both instead of guessing the error type).
+                guard !Task.isCancelled else { return }
                 errors[id] = error.localizedDescription
                 status[id] = nil
                 lastSample[id] = nil
             }
         }
+    }
+
+    /// Cuts a download in progress. `HubCache` stores completed blobs as it
+    /// goes, so a later re-download resumes rather than starting over.
+    ///
+    /// ponytail: doesn't clear `tasks[id]` once a download finishes on its
+    /// own — only this and the next `download(id:)` call for the same id
+    /// touch it. A finished `Task` is cheap to leave sitting in the
+    /// dictionary; clearing it from inside the task itself would need a
+    /// generation token to avoid a fast cancel-then-retry race clobbering a
+    /// newer task's slot.
+    func cancel(id: String) {
+        tasks[id]?.cancel()
+        tasks[id] = nil
+        status[id] = nil
+        lastSample[id] = nil
+        warnings[id] = nil
+        errors[id] = nil
     }
 
     /// Called by the chat path, which loads on demand rather than through

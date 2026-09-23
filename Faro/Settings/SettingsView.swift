@@ -15,7 +15,7 @@ struct SettingsView: View {
     @State private var pendingReset = false
 
     private enum Destination: String, Identifiable {
-        case models, voice, server, mcp
+        case models, voice, server, mcp, personalize, skills
         var id: String { rawValue }
     }
 
@@ -27,6 +27,8 @@ struct SettingsView: View {
                     row("Voz", icon: "waveform", to: .voice)
                     row("Servidor local", icon: "network", to: .server)
                     row("Herramientas MCP", icon: "wrench.and.screwdriver", to: .mcp)
+                    row("Personalización", icon: "person.crop.circle", to: .personalize)
+                    row("Skills", icon: "sparkles", to: .skills)
                 }
 
                 Section {
@@ -117,6 +119,10 @@ struct SettingsView: View {
             ServerPanelView()
         case .mcp:
             MCPServersView()
+        case .personalize:
+            PersonalizeView()
+        case .skills:
+            SkillsView()
         }
     }
 

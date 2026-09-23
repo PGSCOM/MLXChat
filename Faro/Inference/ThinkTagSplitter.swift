@@ -12,11 +12,21 @@ struct ThinkTagSplitter {
 
     private var buffer = ""
     private var insideThink = false
-    /// Whether a real `<think>` has arrived. Until one does, a bare
-    /// `</think>` means the chat template opened the block inside the
-    /// prompt (Qwen3 and kin) and everything so far was reasoning.
+    /// Whether a real `<think>` has arrived *for the block currently being
+    /// awaited*. Until one does, a bare `</think>` means the chat template
+    /// opened the block inside the prompt (Qwen3 and kin) and everything
+    /// since the last block closed was reasoning. Reset after every block
+    /// closes — not just once — because a tool-calling turn can hand the
+    /// model back control after a call, and a template that pre-opens
+    /// `<think>` does so for *that* generation prompt too, not only the
+    /// first one.
     private var hasSeenOpenTag = false
-    private var emittedContentBeforeAnyTag = false
+    /// Characters released as plain `content` since the current segment
+    /// started (i.e. since the last block closed, or since the turn began).
+    /// Reset alongside `hasSeenOpenTag`, so it only ever covers the segment
+    /// that's actually at risk of being retroactively reclassified — not
+    /// the whole turn.
+    private var contentSinceSegmentStart = 0
 
     struct Delta {
         var reasoning = ""
@@ -26,6 +36,26 @@ struct ThinkTagSplitter {
         /// withhold the start of every answer until a tag shows up or never
         /// does — which is exactly what used to stall the whole stream.
         var contentWasReasoning = false
+        /// Trailing characters of the *consumer's own already-accumulated*
+        /// content (not this delta's) that belong to the block that just
+        /// closed and should move into reasoning. 0 when `contentWasReasoning`
+        /// is false. Counts only what leaked since the *last* block boundary
+        /// (explicit or implicit) — not everything ever accumulated — so
+        /// real content an earlier explicit block already vouched for
+        /// survives a later implicit block's reclaim. It can NOT tell apart
+        /// real content from leaked reasoning within the *same* unbroken
+        /// stretch (see `consume`'s doc comment for why).
+        var reclaimedContentLength = 0
+    }
+
+    /// Call when a tool call starts: real content written right before it
+    /// ("Voy a buscar…") would otherwise be indistinguishable from the next
+    /// implicitly-reopened block's own leaked reasoning, since both are just
+    /// "content since the last close" — this draws the boundary explicitly
+    /// instead of guessing at it.
+    mutating func commitContent() {
+        hasSeenOpenTag = false
+        contentSinceSegmentStart = 0
     }
 
     mutating func consume(_ chunk: String) -> Delta {
@@ -53,16 +83,17 @@ struct ThinkTagSplitter {
                 hasSeenOpenTag = true
                 delta.content += piece
             } else {
-                if !insideThink && !hasSeenOpenTag {
-                    // Implicitly opened block: reclaim what already went out.
-                    hasSeenOpenTag = true
-                    if emittedContentBeforeAnyTag {
-                        delta.contentWasReasoning = true
-                        delta.reasoning = delta.content + delta.reasoning
-                        delta.content = ""
-                    }
+                if !insideThink && !hasSeenOpenTag && contentSinceSegmentStart > 0 {
+                    // Implicitly opened block: reclaim only this segment's
+                    // own leaked content, not the consumer's whole message.
+                    delta.contentWasReasoning = true
+                    delta.reclaimedContentLength = contentSinceSegmentStart
                 }
                 delta.reasoning += piece
+                // This block is done — the *next* one starts fresh and may
+                // just as well be implicitly opened again.
+                hasSeenOpenTag = false
+                contentSinceSegmentStart = 0
             }
 
             buffer.removeSubrange(buffer.startIndex..<range.upperBound)
@@ -79,7 +110,7 @@ struct ThinkTagSplitter {
             delta.reasoning += piece
         } else {
             delta.content += piece
-            if !hasSeenOpenTag && !piece.isEmpty { emittedContentBeforeAnyTag = true }
+            if !hasSeenOpenTag { contentSinceSegmentStart += piece.count }
         }
         buffer.removeSubrange(buffer.startIndex..<cut)
         return delta

@@ -35,20 +35,35 @@ struct AskFaroIntent: AppIntent {
         var answer = ""
         var splitter = ThinkTagSplitter()
 
+        // Siri is "the model talking to you" — apply the same profile the
+        // in-app chat does.
+        let preamble = Personalization.preamble(style: Personalization.style)
+        let effectiveSystemPrompt = [preamble, systemPrompt ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n")
+
         do {
             let stream = try await InferenceEngine.shared.streamResponse(
                 conversationID: requestID,
                 modelID: resolvedModel,
-                systemPrompt: systemPrompt ?? "",
+                systemPrompt: effectiveSystemPrompt,
                 history: [],
                 settings: .recommended,
+                // Siri waits in silence while the model reasons, and would
+                // throw the reasoning away anyway.
+                enableThinking: false,
                 prompt: prompt
             )
             for try await generation in stream {
                 // Siri would otherwise read the model's reasoning out loud.
                 guard case .chunk(let piece) = generation else { continue }
                 let delta = splitter.consume(piece)
-                if delta.contentWasReasoning { answer = "" }
+                if delta.contentWasReasoning {
+                    // Drop only what leaked since the last block boundary —
+                    // not the whole answer, which can also hold real text an
+                    // earlier *explicit* block already vouched for (see
+                    // `Delta.reclaimedContentLength`).
+                    let cut = answer.index(answer.endIndex, offsetBy: -delta.reclaimedContentLength)
+                    answer = String(answer[..<cut])
+                }
                 answer += delta.content
             }
             answer += splitter.finish().content

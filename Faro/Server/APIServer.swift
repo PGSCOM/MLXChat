@@ -144,6 +144,8 @@ final class APIServer {
         }
 
         let modelID = (payload.model?.isEmpty == false) ? payload.model! : DefaultModel.repoID
+        // No `Personalization` preamble here on purpose: this is a raw
+        // OpenAI-compatible surface and the client sends its own `system`.
         let systemPrompt = payload.messages.first { $0.role == "system" }?.content.plainText ?? ""
         let history = payload.messages.dropLast()
             .filter { $0.role != "system" }
@@ -172,7 +174,14 @@ final class APIServer {
                 for try await generation in stream {
                     guard case .chunk(let piece) = generation else { continue }
                     let delta = splitter.consume(piece)
-                    if delta.contentWasReasoning { full = "" }
+                    if delta.contentWasReasoning {
+                        // Drop only what leaked since the last block
+                        // boundary — not the whole answer, which can also
+                        // hold real text an earlier *explicit* block already
+                        // vouched for (see `Delta.reclaimedContentLength`).
+                        let cut = full.index(full.endIndex, offsetBy: -delta.reclaimedContentLength)
+                        full = String(full[..<cut])
+                    }
                     full += delta.content
                 }
                 full += splitter.finish().content

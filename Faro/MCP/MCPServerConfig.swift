@@ -42,7 +42,7 @@ final class MCPServerConfig {
     private var keychainAccount: String { "mcp.\(id.uuidString)" }
 
     var snapshot: MCPServerConfigSnapshot {
-        MCPServerConfigSnapshot(id: id, url: url, bearerToken: token)
+        MCPServerConfigSnapshot(id: id, name: name, url: url, bearerToken: token)
     }
 }
 
@@ -50,6 +50,7 @@ final class MCPServerConfig {
 /// `MCPServerConfig` itself is a SwiftData model and can't cross actors.
 struct MCPServerConfigSnapshot: Sendable {
     let id: UUID
+    let name: String
     let url: String
     let bearerToken: String
 }
