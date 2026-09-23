@@ -1,0 +1,397 @@
+import Foundation
+
+/// One block of a parsed Markdown document (a heading, a paragraph, a list
+/// item, a code block, a quote, a rule, a table — GFM pipe syntax or a raw
+/// LaTeX `tabular` environment — or a display equation), each with its own
+/// `AttributedString` so inline formatting (bold, links, inline code)
+/// inside it still renders. Foundation's `AttributedString(markdown:)`
+/// parses headings/paragraphs/lists/code/quotes into `presentationIntent`
+/// but drops the text separators between blocks, and doesn't parse tables
+/// or LaTeX at all — `blocks(of:)` pre-scans the raw text line by line for
+/// tables and display equations, then hands whatever's left to the
+/// `AttributedString`-based parser for everything else.
+struct MarkdownBlock: Identifiable, Equatable {
+    enum ColumnAlignment: Equatable {
+        case leading, center, trailing
+    }
+
+    /// A table cell is either prose or, when its *entire* trimmed content
+    /// is one wrapped LaTeX expression (`$x^2$`, `\(x^2\)`…), a real
+    /// equation — the same whole-cell rule `displayEquation` applies to a
+    /// whole paragraph, just scoped to one cell instead of one line.
+    enum TableCell: Equatable {
+        case text(AttributedString)
+        case equation(String)
+    }
+
+    enum Kind: Equatable {
+        case paragraph
+        case heading(level: Int)
+        /// `marker` is `"•"` for an unordered item, `"3."` for an ordered
+        /// one; `depth` is how many nested lists it sits inside (1 = top).
+        case listItem(marker: String, depth: Int)
+        /// `language` is the fence's own hint (```` ```swift ````), passed
+        /// straight to `CodeHighlighter` — `nil` for a bare fence, which
+        /// falls back to its auto-detection.
+        case code(language: String?)
+        case quote
+        case rule
+        /// A display equation (`$$...$$`, `\[...\]`, or a whole line/
+        /// paragraph wrapped in `$...$`/`\(...\)`) — its raw LaTeX source.
+        /// True inline math mid-sentence isn't split out: `Text` can't
+        /// host an arbitrary math view, so it's left as literal text.
+        case equation(String)
+        case table(header: [TableCell], alignment: [ColumnAlignment], rows: [[TableCell]])
+    }
+
+    let id: Int
+    let kind: Kind
+    let text: AttributedString
+
+    static func blocks(of markdown: String) -> [MarkdownBlock] {
+        let lines = markdown.components(separatedBy: "\n")
+        var blocks: [MarkdownBlock] = []
+        var prose: [String] = []
+
+        func flushProse() {
+            defer { prose = [] }
+            let joined = prose.joined(separator: "\n")
+            guard !joined.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            for (kind, text) in proseBlocks(of: joined) {
+                blocks.append(MarkdownBlock(id: blocks.count, kind: kind, text: text))
+            }
+        }
+
+        var index = 0
+        // Tracks whether we're inside a ``` fence, so a table- or equation-
+        // looking line pasted as an example *inside* a code block isn't
+        // mistaken for a real one — it stays opaque prose, and the existing
+        // AttributedString parser below classifies the fence as `.code`.
+        var insideCodeFence = false
+        while index < lines.count {
+            let line = lines[index]
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                insideCodeFence.toggle()
+                prose.append(line)
+                index += 1
+                continue
+            }
+            if !insideCodeFence, let equation = displayEquation(at: index, in: lines) {
+                flushProse()
+                blocks.append(MarkdownBlock(id: blocks.count, kind: .equation(equation.latex), text: AttributedString(equation.latex)))
+                index = equation.nextIndex
+                continue
+            }
+            if !insideCodeFence, let table = gfmTable(at: index, in: lines) ?? latexTable(at: index, in: lines) {
+                flushProse()
+                blocks.append(MarkdownBlock(
+                    id: blocks.count,
+                    kind: .table(header: table.header, alignment: table.alignment, rows: table.rows),
+                    text: AttributedString()
+                ))
+                index = table.nextIndex
+                continue
+            }
+            prose.append(line)
+            index += 1
+        }
+        flushProse()
+        return blocks.isEmpty ? [MarkdownBlock(id: 0, kind: .paragraph, text: AttributedString(markdown))] : blocks
+    }
+
+    // MARK: - Prose (headings, paragraphs, lists, code, quotes, rules)
+
+    private static func proseBlocks(of markdown: String) -> [(Kind, AttributedString)] {
+        guard let attributed = try? AttributedString(
+            markdown: markdown,
+            options: .init(interpretedSyntax: .full)
+        ), !attributed.runs.isEmpty else {
+            return [(.paragraph, AttributedString(markdown))]
+        }
+
+        var result: [(Kind, AttributedString)] = []
+        var blockText = AttributedString()
+        // `presentationIntent` carries a per-block `identity`, so two
+        // consecutive paragraphs compare unequal even with identical
+        // components — that's what lets this loop tell them apart.
+        var blockIntent = attributed.runs.first?.presentationIntent
+
+        func flush() {
+            defer { blockText = AttributedString() }
+            let trimmedText = trimmed(blockText)
+            let blockKind = kind(for: blockIntent)
+            guard !trimmedText.characters.isEmpty || blockKind == .rule else { return }
+            result.append((blockKind, trimmedText))
+        }
+
+        for run in attributed.runs {
+            if run.presentationIntent != blockIntent {
+                flush()
+                blockIntent = run.presentationIntent
+            }
+            blockText += AttributedString(attributed[run.range])
+        }
+        flush()
+        return result
+    }
+
+    private static func kind(for intent: PresentationIntent?) -> Kind {
+        guard let intent else { return .paragraph }
+        var headingLevel: Int?
+        var listDepth = 0
+        var isUnordered = false
+        var ordinal: Int?
+        for component in intent.components {
+            switch component.kind {
+            case .header(let level): headingLevel = level
+            case .orderedList: listDepth += 1
+            case .unorderedList: listDepth += 1; isUnordered = true
+            case .listItem(let itemOrdinal): ordinal = itemOrdinal
+            case .codeBlock(let languageHint): return .code(language: languageHint)
+            case .blockQuote: return .quote
+            case .thematicBreak: return .rule
+            default: break
+            }
+        }
+        if let headingLevel { return .heading(level: headingLevel) }
+        if listDepth > 0 {
+            return .listItem(marker: isUnordered ? "•" : "\(ordinal ?? 1).", depth: listDepth)
+        }
+        return .paragraph
+    }
+
+    private static func trimmed(_ text: AttributedString) -> AttributedString {
+        var start = text.startIndex
+        while start < text.endIndex, text.characters[start].isWhitespace {
+            start = text.index(afterCharacter: start)
+        }
+        var end = text.endIndex
+        while end > start, text.characters[text.index(beforeCharacter: end)].isWhitespace {
+            end = text.index(beforeCharacter: end)
+        }
+        return AttributedString(text[start..<end])
+    }
+
+    // MARK: - Display equations
+
+    private struct EquationMatch {
+        let latex: String
+        let nextIndex: Int
+    }
+
+    /// Delimiters whose content may span several lines, as a fence: the
+    /// whole line is just the opener, content follows, then a line that's
+    /// just the closer (mirrors how ``` code fences work). Also matched on
+    /// one line if both ends land there.
+    private static let fenceDelimiters: [(open: String, close: String)] = [("$$", "$$"), ("\\[", "\\]")]
+    /// Delimiters only recognized when the *entire* line is one wrapped
+    /// expression — the common "$E = mc^2$ on its own line" case — never
+    /// mid-sentence, and never a line with more than one pair (that's
+    /// ordinary prose using a literal `$`).
+    private static let inlineOnlyDelimiters: [(open: String, close: String)] = [("$", "$"), ("\\(", "\\)")]
+
+    private static func displayEquation(at index: Int, in lines: [String]) -> EquationMatch? {
+        let trimmedLine = lines[index].trimmingCharacters(in: .whitespaces)
+
+        if let latex = wholeStringEquation(trimmedLine) {
+            return EquationMatch(latex: latex, nextIndex: index + 1)
+        }
+
+        // The multi-line fence form ($$ / \[ alone on a line, content
+        // follows, a matching close line ends it) only makes sense scanning
+        // a line array, so it stays here rather than in the shared helper.
+        for (open, close) in fenceDelimiters where trimmedLine == open {
+            var body: [String] = []
+            var cursor = index + 1
+            while cursor < lines.count {
+                if lines[cursor].trimmingCharacters(in: .whitespaces) == close {
+                    let latex = body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                    return latex.isEmpty ? nil : EquationMatch(latex: latex, nextIndex: cursor + 1)
+                }
+                body.append(lines[cursor])
+                cursor += 1
+            }
+            return nil // unterminated fence — leave the opener as plain text
+        }
+
+        return nil
+    }
+
+    /// A trimmed string that is *entirely* one wrapped LaTeX expression —
+    /// the single-line match shared by `displayEquation` (a whole line or
+    /// paragraph) and a GFM table cell (which can't span lines at all).
+    private static func wholeStringEquation(_ trimmed: String) -> String? {
+        for (open, close) in fenceDelimiters {
+            guard trimmed.hasPrefix(open), trimmed.hasSuffix(close),
+                  trimmed.count > open.count + close.count else { continue }
+            let inner = trimmed.dropFirst(open.count).dropLast(close.count)
+                .trimmingCharacters(in: .whitespaces)
+            if !inner.isEmpty { return inner }
+        }
+        for (open, close) in inlineOnlyDelimiters {
+            guard trimmed.hasPrefix(open), trimmed.hasSuffix(close),
+                  trimmed.count > open.count + close.count else { continue }
+            let inner = trimmed.dropFirst(open.count).dropLast(close.count)
+                .trimmingCharacters(in: .whitespaces)
+            guard !inner.isEmpty, !inner.contains(open) else { continue }
+            return inner
+        }
+        return nil
+    }
+
+    // MARK: - GFM tables
+
+    private struct TableMatch {
+        let header: [TableCell]
+        let alignment: [ColumnAlignment]
+        let rows: [[TableCell]]
+        let nextIndex: Int
+    }
+
+    private static func gfmTable(at index: Int, in lines: [String]) -> TableMatch? {
+        guard index + 1 < lines.count, lines[index].contains("|") else { return nil }
+        guard let alignment = columnAlignment(of: lines[index + 1]) else { return nil }
+
+        let headerCells = splitRow(lines[index])
+        guard !headerCells.isEmpty, headerCells.count == alignment.count else { return nil }
+
+        var rows: [[String]] = []
+        var cursor = index + 2
+        while cursor < lines.count {
+            let line = lines[cursor]
+            guard !line.trimmingCharacters(in: .whitespaces).isEmpty, line.contains("|") else { break }
+            var cells = splitRow(line)
+            if cells.count < headerCells.count {
+                cells += Array(repeating: "", count: headerCells.count - cells.count)
+            } else if cells.count > headerCells.count {
+                cells = Array(cells.prefix(headerCells.count))
+            }
+            rows.append(cells)
+            cursor += 1
+        }
+
+        return TableMatch(
+            header: headerCells.map(tableCell),
+            alignment: alignment,
+            rows: rows.map { $0.map(tableCell) },
+            nextIndex: cursor
+        )
+    }
+
+    private static func tableCell(_ text: String) -> TableCell {
+        if let latex = wholeStringEquation(text) { return .equation(latex) }
+        return .text(inlineAttributed(text))
+    }
+
+    // MARK: - LaTeX tables
+
+    /// A raw `\begin{tabular}{...} ... \end{tabular}` environment — what a
+    /// model asked to write actual LaTeX (rather than Markdown) reaches
+    /// for, distinct from a GFM pipe table. Only the tabular environment
+    /// itself is understood; a `\begin{table}[h]`/`\caption`/`\label`
+    /// wrapper around it, if present, is left as literal text, the same
+    /// way an equation is pulled out of surrounding prose without trying
+    /// to parse the rest of a LaTeX document.
+    private static func latexTable(at index: Int, in lines: [String]) -> TableMatch? {
+        guard let colSpec = latexColumnSpec(in: lines[index].trimmingCharacters(in: .whitespaces)) else { return nil }
+        let alignment = latexColumnAlignment(colSpec)
+        guard !alignment.isEmpty else { return nil }
+
+        var rows: [[String]] = []
+        var pendingRow = ""
+        var cursor = index + 1
+        var closed = false
+        while cursor < lines.count {
+            let trimmedLine = lines[cursor].trimmingCharacters(in: .whitespaces)
+            if trimmedLine.hasPrefix("\\end{tabular}") {
+                closed = true
+                cursor += 1
+                break
+            }
+            // \hline / \cline{...} are row separators, not content.
+            if !trimmedLine.isEmpty, trimmedLine != "\\hline", !trimmedLine.hasPrefix("\\cline") {
+                pendingRow += (pendingRow.isEmpty ? "" : " ") + trimmedLine
+                if pendingRow.hasSuffix("\\\\") {
+                    let cells = splitLatexRow(pendingRow)
+                    if cells.count == alignment.count { rows.append(cells) }
+                    pendingRow = ""
+                }
+            }
+            cursor += 1
+        }
+        // Unterminated (still streaming, or malformed) — leave as plain
+        // text rather than guess at a row structure that never closed.
+        guard closed, !rows.isEmpty else { return nil }
+
+        let header = rows.removeFirst()
+        return TableMatch(
+            header: header.map(tableCell),
+            alignment: alignment,
+            rows: rows.map { $0.map(tableCell) },
+            nextIndex: cursor
+        )
+    }
+
+    private static func latexColumnSpec(in line: String) -> String? {
+        guard line.hasPrefix("\\begin{tabular}") else { return nil }
+        let rest = line.dropFirst("\\begin{tabular}".count)
+        guard rest.hasPrefix("{"), let closeBrace = rest.firstIndex(of: "}") else { return nil }
+        return String(rest[rest.index(after: rest.startIndex)..<closeBrace])
+    }
+
+    /// `l`/`c`/`r` map straight to alignment; everything else in a colspec
+    /// (`|`, `@{}`, a `p{width}` column's braces) is formatting LaTeX
+    /// controls itself, so it's just skipped rather than modeled.
+    private static func latexColumnAlignment(_ colSpec: String) -> [ColumnAlignment] {
+        colSpec.compactMap { char in
+            switch char {
+            case "l": .leading
+            case "c": .center
+            case "r": .trailing
+            default: nil
+            }
+        }
+    }
+
+    /// Splits a LaTeX table row ("`A & B \\`") into trimmed cells on `&`,
+    /// after dropping the row's trailing `\\` terminator.
+    private static func splitLatexRow(_ row: String) -> [String] {
+        var text = row
+        if text.hasSuffix("\\\\") { text.removeLast(2) }
+        return text
+            .components(separatedBy: "&")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    /// The row of `---`/`:--`/`--:`/`:-:` cells right under a table header,
+    /// the thing that actually marks a run of `|`-separated lines as a GFM
+    /// table rather than prose that happens to contain a pipe.
+    private static func columnAlignment(of separatorLine: String) -> [ColumnAlignment]? {
+        let cells = splitRow(separatorLine)
+        guard !cells.isEmpty else { return nil }
+        var result: [ColumnAlignment] = []
+        for cell in cells {
+            guard !cell.isEmpty, cell.allSatisfy({ $0 == "-" || $0 == ":" }), cell.contains("-") else { return nil }
+            switch (cell.hasPrefix(":"), cell.hasSuffix(":")) {
+            case (true, true): result.append(.center)
+            case (false, true): result.append(.trailing)
+            default: result.append(.leading)
+            }
+        }
+        return result
+    }
+
+    private static func splitRow(_ line: String) -> [String] {
+        var trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("|") { trimmed.removeFirst() }
+        if trimmed.hasSuffix("|") { trimmed.removeLast() }
+        return trimmed
+            .split(separator: "|", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    private static func inlineAttributed(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
+    }
+}

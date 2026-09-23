@@ -125,6 +125,13 @@ jobs:
           key: ${{ runner.os }}-spm-${{ hashFiles('project.yml') }}
           restore-keys: ${{ runner.os }}-spm-
 
+      - name: Cache DerivedData
+        uses: actions/cache@v6
+        with:
+          path: DerivedData
+          key: ${{ runner.os }}-derived-data-test-${{ hashFiles('**/*.swift', 'project.yml') }}
+          restore-keys: ${{ runner.os }}-derived-data-test-
+
       - name: Run unit tests
         run: |
           set -o pipefail
@@ -132,6 +139,7 @@ jobs:
             -project Faro.xcodeproj \
             -scheme Faro \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -derivedDataPath "$PWD/DerivedData" \
             -clonedSourcePackagesDirPath "$PWD/SourcePackages" \
             -skipPackagePluginValidation \
             -skipMacroValidation

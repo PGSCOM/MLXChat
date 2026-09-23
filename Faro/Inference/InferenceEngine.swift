@@ -189,13 +189,15 @@ actor InferenceEngine {
         return session
     }
 
-    /// Drops a conversation's live session (e.g. after clearing chat or
-    /// changing its model) so the next turn rebuilds it from scratch.
-    func invalidateSession(conversationID: UUID) {
+    /// Drops a conversation's live session (e.g. after clearing chat,
+    /// changing its model, editing a message, or switching branches) so
+    /// the next turn rebuilds it from scratch. `await`s the hop to
+    /// `AppleFoundationEngine` rather than firing a detached `Task`, so a
+    /// caller that `await`s this can rely on both sessions actually being
+    /// gone before it starts a new turn.
+    func invalidateSession(conversationID: UUID) async {
         sessions[conversationID] = nil
-        Task { @MainActor in
-            AppleFoundationEngine.shared.invalidateSession(conversationID: conversationID)
-        }
+        await AppleFoundationEngine.shared.invalidateSession(conversationID: conversationID)
     }
 
     func streamResponse(
