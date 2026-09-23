@@ -7,6 +7,8 @@ import AVFoundation
 enum VoiceSettings {
     private static let localeKey = "voiceRecognitionLocale"
     private static let voiceKey = "voiceSynthesisVoiceID"
+    /// Everything this enum stores, for `AppReset`.
+    static let keys = [localeKey, voiceKey]
 
     /// An ICU identifier, as `SFSpeechRecognizer.supportedLocales()` hands
     /// them out. Empty = follow the system.

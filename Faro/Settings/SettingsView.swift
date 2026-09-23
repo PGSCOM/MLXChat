@@ -12,6 +12,7 @@ struct SettingsView: View {
     @State private var destination: Destination?
     @State private var systemPrompt = AppSettings.defaultSystemPrompt
     @State private var pendingHistoryDeletion = false
+    @State private var pendingReset = false
 
     private enum Destination: String, Identifiable {
         case models, voice, server, mcp
@@ -43,6 +44,9 @@ struct SettingsView: View {
                         pendingHistoryDeletion = true
                     }
                     .disabled(conversations.isEmpty)
+                    Button("Restablecer Faro", role: .destructive) {
+                        pendingReset = true
+                    }
                 } footer: {
                     Text("Todo ocurre en este dispositivo: nada de esto sale de aquí.")
                 }
@@ -69,6 +73,13 @@ struct SettingsView: View {
                 Button("Cancelar", role: .cancel) { pendingHistoryDeletion = false }
             } message: {
                 Text("Se borrarán \(conversations.count) conversaciones. No se puede deshacer.")
+            }
+            .confirmationDialog("¿Restablecer Faro?", isPresented: $pendingReset, titleVisibility: .visible) {
+                Button("Restablecer y borrar modelos", role: .destructive) { reset(deletingModels: true) }
+                Button("Restablecer y conservar modelos", role: .destructive) { reset(deletingModels: false) }
+                Button("Cancelar", role: .cancel) {}
+            } message: {
+                Text("Se borrarán conversaciones, proyectos, servidores MCP y ajustes, como si la app se acabara de instalar. No se puede deshacer.")
             }
         }
     }
@@ -111,9 +122,27 @@ struct SettingsView: View {
 
     private func deleteHistory() {
         pendingHistoryDeletion = false
-        for conversation in conversations {
-            modelContext.delete(conversation)
+        // Read now: `@Query` and `@Environment` aren't meant to be read
+        // after an `await`, once the view may have moved on.
+        let doomed = conversations
+        let context = modelContext
+        Task {
+            await ChatViewModel.prepareForDeletion(Set(doomed.map(\.id)))
+            for conversation in doomed {
+                context.delete(conversation)
+            }
+            try? context.save()
         }
-        try? modelContext.save()
+    }
+
+    private func reset(deletingModels: Bool) {
+        // Cleared here too, or `onDisappear` would write the old one back.
+        systemPrompt = ""
+        let context = modelContext
+        let close = dismiss
+        Task {
+            await AppReset.run(in: context, deletingModels: deletingModels)
+            close()
+        }
     }
 }

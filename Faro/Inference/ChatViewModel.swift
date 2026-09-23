@@ -34,6 +34,24 @@ final class ChatViewModel {
 
     private var generateTask: Task<Void, Never>?
 
+    /// Every reply still streaming, app-wide, keyed by its assistant
+    /// message. Outlives the view model on purpose: going back to the list
+    /// drops the `ChatView` but not the turn it started.
+    private static var liveTurns: [UUID: (conversationID: UUID, task: Task<Void, Never>)] = [:]
+
+    /// Call before deleting conversations. A reply left streaming would
+    /// keep writing into messages SwiftData has already deleted, so each
+    /// one is cancelled and awaited (it saves what it had), and the live
+    /// sessions go too — they'd otherwise hold their KV cache for nothing.
+    static func prepareForDeletion(_ conversationIDs: Set<UUID>) async {
+        let turns = liveTurns.values.filter { conversationIDs.contains($0.conversationID) }.map { $0.task }
+        for turn in turns { turn.cancel() }
+        for turn in turns { await turn.value }
+        for id in conversationIDs {
+            await InferenceEngine.shared.invalidateSession(conversationID: id)
+        }
+    }
+
     init(conversation: Conversation, modelContext: SwiftData.ModelContext) {
         self.conversation = conversation
         self.modelContext = modelContext
@@ -204,6 +222,7 @@ final class ChatViewModel {
         streamingMessageID = assistantMessage.id
 
         let conversationID = conversation.id
+        let turnID = assistantMessage.id
         let effort = conversation.thinkingEffort
         // The hint text goes to the model only — the saved/shown user
         // message stays clean.
@@ -220,7 +239,7 @@ final class ChatViewModel {
             downloadCoordinator.beginLoad(id: modelID)
         }
 
-        generateTask = Task {
+        let turn: Task<Void, Never> = Task {
             // Ordered before the stream starts, so the session is never
             // rebuilt out from under a request already in flight.
             if freshSession {
@@ -309,7 +328,12 @@ final class ChatViewModel {
             streamingMessageID = nil
             enter(.idle)
             try? modelContext.save()
+            Self.liveTurns[turnID] = nil
         }
+        // The task body is main-actor work queued behind this method, so
+        // it can't finish (and unregister) before it's registered here.
+        generateTask = turn
+        Self.liveTurns[turnID] = (conversationID: conversationID, task: turn)
     }
 
     /// The history to prompt with: everything on the branch up to (but not

@@ -6,6 +6,8 @@ import Foundation
 enum ServerSettings {
     private static let portKey = "serverPort"
     private static let tokenKey = "serverBearerToken"
+    /// Everything this enum stores, for `AppReset`.
+    static let keys = [portKey, tokenKey]
 
     static var port: Int {
         get {
