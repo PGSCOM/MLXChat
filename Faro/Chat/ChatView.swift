@@ -8,9 +8,14 @@ struct ChatView: View {
     /// Models that can be switched to without a download. Read once off
     /// the main actor — `body` re-runs on every token and this touches disk.
     @State private var quickModelIDs: [String] = []
-    // Auto-scroll only while the user is already at the bottom — otherwise
-    // a streaming reply keeps yanking the view back down and they can never
-    // scroll up to read earlier messages.
+    // Whether the streaming reply should keep pulling the view down.
+    // Cut the moment the user's finger touches the scroll view — checking
+    // proximity alone never works: a token lands every few ms and yanks the
+    // view back to "near bottom" before the user can drag past the threshold.
+    @State private var followsBottom = true
+    // Pure geometry: how close the content actually is to the bottom, used
+    // to show the jump button and to know whether letting go re-arms
+    // `followsBottom`.
     @State private var isNearBottom = true
     private let downloadCoordinator = ModelDownloadCoordinator.shared
     private let bottomProximityThreshold: CGFloat = 80
@@ -28,8 +33,9 @@ struct ChatView: View {
 
                 VStack {
                     Spacer()
-                    if !isNearBottom && !viewModel.conversation.messages.isEmpty {
+                    if !followsBottom && !isNearBottom && !viewModel.conversation.messages.isEmpty {
                         ScrollToBottomButton {
+                            followsBottom = true
                             isNearBottom = true
                             scrollToBottom(proxy)
                         }
@@ -268,20 +274,32 @@ struct ChatView: View {
         } action: { _, nearBottom in
             isNearBottom = nearBottom
         }
-        .onChange(of: messages.last?.content) { scrollToBottomIfNear(proxy) }
-        .onChange(of: messages.last?.reasoning) { scrollToBottomIfNear(proxy) }
+        // The only source of truth for "did the user grab the scroll view":
+        // `.interacting` fires the instant a drag starts, regardless of how
+        // close to the bottom that drag begins. Letting go only re-arms
+        // following if they actually let go at the bottom.
+        .onScrollPhaseChange { _, newPhase in
+            if newPhase == .interacting {
+                followsBottom = false
+            } else if newPhase == .idle && isNearBottom {
+                followsBottom = true
+            }
+        }
+        .onChange(of: messages.last?.content) { scrollToBottomIfFollowing(proxy) }
+        .onChange(of: messages.last?.reasoning) { scrollToBottomIfFollowing(proxy) }
         // Steps only change at block boundaries (a tool card appearing,
         // a reasoning block closing) — `reasoning` above already covers
         // a block's own growth token by token.
-        .onChange(of: messages.last?.stepsRaw) { scrollToBottomIfNear(proxy) }
+        .onChange(of: messages.last?.stepsRaw) { scrollToBottomIfFollowing(proxy) }
         .onChange(of: messages.count) {
+            followsBottom = true
             isNearBottom = true
             proxy.scrollTo("bottom", anchor: .bottom)
         }
     }
 
-    private func scrollToBottomIfNear(_ proxy: ScrollViewProxy) {
-        guard isNearBottom else { return }
+    private func scrollToBottomIfFollowing(_ proxy: ScrollViewProxy) {
+        guard followsBottom else { return }
         scrollToBottom(proxy)
     }
 

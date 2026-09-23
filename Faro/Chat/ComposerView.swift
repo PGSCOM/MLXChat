@@ -155,7 +155,16 @@ struct ComposerView: View {
 
     private func send() {
         guard !viewModel.isGenerating else { return }
+        let sent = viewModel.draft
         viewModel.send()
+        // ponytail: a pending autocorrect/predictive suggestion can commit
+        // into the focused field right after we clear it, writing the old
+        // text back. Clear again next runloop tick — guarded by equality to
+        // `sent` so a genuinely new draft survives; a coincidental retype of
+        // the exact same message is the known edge case this doesn't cover.
+        Task { @MainActor in
+            if viewModel.draft == sent { viewModel.draft = "" }
+        }
     }
 
     private func handlePickedFile(_ result: Result<URL, Error>) {
