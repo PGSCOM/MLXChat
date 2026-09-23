@@ -53,12 +53,12 @@ struct GenerationSettingsSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Listo") {
-                        onDismiss()
-                        dismiss()
-                    }
+                    Button("Listo") { dismiss() }
                 }
             }
+            // Edits land on the conversation as they're made, so any way
+            // out — a swipe down included — has to rebuild the session.
+            .onDisappear(perform: onDismiss)
         }
     }
 }

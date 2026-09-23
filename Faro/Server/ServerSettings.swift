@@ -6,6 +6,9 @@ import Foundation
 enum ServerSettings {
     private static let portKey = "serverPort"
     private static let tokenKey = "serverBearerToken"
+    /// Everything this enum keeps in `UserDefaults` (the token only until
+    /// it moves to the Keychain), for `AppReset`.
+    static let keys = [portKey, tokenKey]
 
     static var port: Int {
         get {
@@ -15,16 +18,20 @@ enum ServerSettings {
         set { UserDefaults.standard.set(newValue, forKey: portKey) }
     }
 
-    /// Generated once, reused after that, editable by the user.
+    /// Generated once, reused after that, kept in the Keychain. A token
+    /// saved in `UserDefaults` before that is carried over rather than
+    /// replaced, so devices already using it keep working.
     static var bearerToken: String {
-        get {
-            if let existing = UserDefaults.standard.string(forKey: tokenKey), !existing.isEmpty {
-                return existing
-            }
-            let generated = UUID().uuidString
-            UserDefaults.standard.set(generated, forKey: tokenKey)
-            return generated
+        if let stored = Keychain.string(for: tokenKey) { return stored }
+        let legacy = UserDefaults.standard.string(forKey: tokenKey) ?? ""
+        let token = legacy.isEmpty ? UUID().uuidString : legacy
+        if Keychain.set(token, for: tokenKey) {
+            UserDefaults.standard.removeObject(forKey: tokenKey)
+        } else {
+            // Without a Keychain it stays put: minting a new token on
+            // every read would lock every client out.
+            UserDefaults.standard.set(token, forKey: tokenKey)
         }
-        set { UserDefaults.standard.set(newValue, forKey: tokenKey) }
+        return token
     }
 }

@@ -169,7 +169,7 @@ struct ChatView: View {
 
     private var emptyState: some View {
         VStack(spacing: 18) {
-            BeamView(intensity: viewModel.isGenerating ? 1 : 0.2)
+            NuevaConversacionAnimationView()
                 .frame(width: 240, height: 240)
             Text("Todo ocurre en este dispositivo")
                 .font(.system(size: 16))

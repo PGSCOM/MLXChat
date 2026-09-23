@@ -166,6 +166,12 @@ falls back to the curated default when the remembered model is no longer on
 disk. An existing conversation always keeps its own `modelID`; only *new*
 ones start from the remembered one.
 
+Secrets never go in either: the local server's bearer token and each MCP
+server's token live in the Keychain (`Faro/Settings/Keychain.swift`,
+`ThisDeviceOnly`, so they stay out of backups). "Restablecer Faro"
+(`AppReset`) wipes SwiftData, those `UserDefaults` keys and the Keychain,
+so anything new that persists state has to be added there too.
+
 Settings are one screen (`Faro/Settings/SettingsView.swift`): models, voice,
 the local server and MCP are presented from it as sheets, unmodified, because
 each already brings its own `NavigationStack` and close button.
