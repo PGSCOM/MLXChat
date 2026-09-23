@@ -523,52 +523,6 @@ private struct ToolCallCard: View {
     }
 }
 
-/// The word the model is busy with, lit by the same lamp as the beam: a
-/// warm pass travelling across the glyphs while the turn is live. Driven
-/// off the timeline's clock rather than a repeating animation, so a redraw
-/// on every token can't leave it stranded mid-sweep — and the label is
-/// drawn at full strength underneath, so it stays readable if the timeline
-/// never ticks at all or motion is reduced.
-private struct SweptLabel: View {
-    let text: String
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// One pass, plus a beat of darkness before the next one comes round.
-    private static let period: Double = 2.6
-
-    var body: some View {
-        label
-            .foregroundStyle(FaroColor.ash)
-            .overlay { if !reduceMotion { light } }
-    }
-
-    private var label: some View {
-        Text(text).font(.footnote.weight(.medium))
-    }
-
-    private var light: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: Self.period) / Self.period
-            GeometryReader { geo in
-                LinearGradient(
-                    stops: [
-                        .init(color: FaroColor.lampCore.opacity(0), location: 0),
-                        .init(color: FaroColor.lampCore, location: 0.5),
-                        .init(color: FaroColor.lampCore.opacity(0), location: 1),
-                    ],
-                    startPoint: .leading, endPoint: .trailing
-                )
-                .frame(width: geo.size.width * 0.7)
-                // Starts fully off the left edge, leaves fully past the right.
-                .offset(x: (t * 1.7 - 0.7) * geo.size.width)
-            }
-            .mask(label)
-        }
-        .allowsHitTesting(false)
-    }
-}
-
 /// A user turn: its image (if any), its attachment named but not spelled
 /// out in full, then what was actually typed. A pasted file's extracted
 /// text used to sit inline in the bubble; it now lives on the message
