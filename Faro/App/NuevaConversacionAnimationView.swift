@@ -31,6 +31,11 @@ struct NuevaConversacionAnimationView: View {
     var body: some View {
         LottieView(animation: animation)
             .playbackMode(isPlaying ? .playing(.fromProgress(nil, toProgress: 1, loopMode: .loop)) : .paused(at: .currentFrame))
+            // The file is keyframed at 30fps but the main-thread engine
+            // redraws on every screen refresh by default (60-120Hz) —
+            // this caps real redraw work to the 30 frames that actually
+            // change anything, cutting it roughly in half on most devices.
+            .configure(\.respectAnimationFrameRate, to: true)
             .resizable()
             .accessibilityHidden(true)
     }
