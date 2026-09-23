@@ -20,7 +20,13 @@ settings:
 packages:
   MLXSwiftLM:
     url: https://github.com/ml-explore/mlx-swift-lm
-    from: 3.31.3
+    # Pinned past the 3.31.4 tag: that tag can't load Gemma 4 (E2B/E4B) at
+    # all (missing k_proj/v_proj on its KV-shared layers, fixed by #384/#390)
+    # and its ChatSession drops a tool result silently for models whose
+    # template refuses a lone `tool` message (Qwen3.5), fixed by #409's
+    # full-transcript re-render. Revert to `from:` once a tag past this
+    # commit ships.
+    revision: ee673d6a71d76e67b532dc7eaf91d92edc3bb8bb
   SwiftHuggingFace:
     url: https://github.com/huggingface/swift-huggingface
     from: 0.9.0

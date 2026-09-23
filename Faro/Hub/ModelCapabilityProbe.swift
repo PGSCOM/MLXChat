@@ -75,16 +75,6 @@ enum ModelCapabilityProbe {
     /// `<tools>` inside text it prints and reads its tools from
     /// `xml_tools`, so a `tools` list handed to it never reaches the model.
     ///
-    /// The second half is about the inference library, not the model:
-    /// `ChatSession` (mlx-swift-lm 3.31.4) hands a tool's result back by
-    /// rendering the `tool` message alone, and Qwen3.5's template refuses
-    /// any render without a user message — a Jinja `TemplateException`
-    /// in the middle of the answer.
-    ///
-    /// ponytail: matches that template's own error text. Once mlx-swift-lm
-    /// tags the transcript-aware `ChatSession` already on its `main` (it
-    /// re-renders the whole conversation every turn), drop that half.
-    ///
     /// Deliberately NOT `ToolCallFormat.infer(from:) != nil` (mlx-swift-lm):
     /// `nil` there means "the common `<tool_call>{...}</tool_call>`
     /// dialect", not "no tool support" — it would call Qwen3 unsupported.
@@ -93,7 +83,6 @@ enum ModelCapabilityProbe {
         let code = stringLiteral.stringByReplacingMatches(
             in: chatTemplate, range: range, withTemplate: "''")
         return code.range(of: #"\btools\b"#, options: .regularExpression) != nil
-            && !chatTemplate.contains("No user query found")
     }
 
     /// Downloads just the chat template — not the model — used before the

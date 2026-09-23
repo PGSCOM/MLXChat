@@ -76,12 +76,18 @@ baked in at construction, so there's no in-place update, only rebuild-next-turn.
 mlx-swift-lm 3.31.4's `ChatSession` only ever appends to its KV cache, so that
 reasoning would otherwise ride along in the context for every later turn.
 
-Two more 3.31.4 quirks shape `InferenceEngine.session`: the system prompt is
-seeded as the first *history* message (`instructions` gets re-rendered and
-appended on every turn), and tools are only offered when
-`ModelCapabilityProbe.supportsTools` says the template can take a tool result
-back — `ChatSession` renders that `tool` message on its own, which Qwen3.5's
-template rejects with a Jinja `TemplateException`.
+One more quirk shapes `InferenceEngine.session`: the system prompt is seeded
+as the first *history* message, not as `instructions` (`ChatSession` re-renders
+`instructions` and appends it on every turn, which would pile up the profile,
+skills and project documents once per turn).
+
+`MLXSwiftLM` is pinned past its `3.31.4` tag (`project.yml`, a `revision:`
+not a `from:`) to a `main` commit: that tag can't load Gemma 4 (missing
+`k_proj`/`v_proj` on its KV-shared tail layers) and its `ChatSession` hands a
+tool's result back by rendering the `tool` message alone, which a template
+that refuses to render without a preceding user turn (Qwen3.5) throws a Jinja
+`TemplateException` on. Revert to a plain `from:` once a tag past that commit
+ships.
 
 Models load via `#huggingFaceLoadModelContainer` (a macro from
 `MLXHuggingFace`), which downloads through Hugging Face's `HubClient` into
@@ -127,6 +133,11 @@ Chat templates (Qwen3 and kin) pre-inject the opening `<think>` into the
 and since that text has already been streamed out as content, the delta raises
 `contentWasReasoning` and every consumer moves what it already emitted into
 reasoning. Streaming immediately and correcting beats stalling the stream.
+
+Gemma 4 marks the same span with its own channel delimiters
+(`<|channel>thought` / `<channel|>`) instead of `<think>`/`</think>` —
+`ThinkTagSplitter` normalizes them to the `<think>` pair as the first step of
+`consume`, so every dialect after that point only has to know one.
 
 ### Replaying a turn in order: `TurnRecorder` and `TurnStep`
 

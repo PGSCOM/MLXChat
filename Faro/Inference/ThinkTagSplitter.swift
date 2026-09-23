@@ -5,10 +5,19 @@ import Foundation
 /// both delimiters inline in the token stream (MLXLMCommon's `Generation`
 /// has no separate reasoning case), and a delimiter can land split across
 /// two chunks, so this holds back only the tail that could still grow into
-/// a real tag and releases everything else immediately.
+/// a real tag and releases everything else immediately. Gemma 4 uses its
+/// own channel delimiters for the same span (`<|channel>thought` /
+/// `<channel|>`) — normalized to `<think>`/`</think>` up front so the rest
+/// of this type never has to know two dialects.
 struct ThinkTagSplitter {
     private static let openTag = "<think>"
     private static let closeTag = "</think>"
+    /// Gemma 4 marks the same reasoning span with its own channel
+    /// delimiters. Normalized to the tags above as the very first step of
+    /// `consume`, so every dialect after that point (implicit-reopen
+    /// detection, `heldBackCount`) only ever has to know one.
+    private static let gemmaOpenTag = "<|channel>thought"
+    private static let gemmaCloseTag = "<channel|>"
 
     private var buffer = ""
     private var insideThink = false
@@ -60,6 +69,8 @@ struct ThinkTagSplitter {
 
     mutating func consume(_ chunk: String) -> Delta {
         buffer += chunk
+        buffer = buffer.replacingOccurrences(of: Self.gemmaOpenTag, with: Self.openTag)
+        buffer = buffer.replacingOccurrences(of: Self.gemmaCloseTag, with: Self.closeTag)
         var delta = Delta()
 
         while true {
@@ -133,11 +144,12 @@ struct ThinkTagSplitter {
     /// reaches the screen token by token instead of lagging behind a
     /// fixed-size lookahead window.
     private static func heldBackCount(_ text: String) -> Int {
-        let longest = min(max(openTag.count, closeTag.count) - 1, text.count)
+        let tags = [openTag, closeTag, gemmaOpenTag, gemmaCloseTag]
+        let longest = min(tags.map(\.count).max()! - 1, text.count)
         guard longest > 0 else { return 0 }
         for length in stride(from: longest, through: 1, by: -1) {
             let suffix = text.suffix(length)
-            if openTag.hasPrefix(suffix) || closeTag.hasPrefix(suffix) { return length }
+            if tags.contains(where: { $0.hasPrefix(suffix) }) { return length }
         }
         return 0
     }

@@ -10,10 +10,9 @@ import Foundation
 /// chat — checked by rendering each chat template the way `ChatSession`
 /// does. The first entry is also `DefaultModel`.
 ///
-/// Deliberately not listed: Qwen3.5 (its template refuses the turn that
-/// hands a tool's result back — see `ModelCapabilityProbe.supportsTools`),
-/// Qwen3-2507 Thinking (reasoning can't be switched off) and SmolLM3 (its
-/// template reads `xml_tools`, never `tools`).
+/// Deliberately not listed: Gemma 4 E4B (fits few devices at 5+ GB) and
+/// the `gemma-4-*-qat-mobile` repos (a quantization format — per-tensor
+/// `weight_scale`, `quant_method: gemma` — mlx-swift-lm doesn't load).
 struct CuratedModel: Identifiable, Sendable {
     let id: String
     let displayName: String
@@ -26,33 +25,28 @@ struct CuratedModel: Identifiable, Sendable {
 
     static let all: [CuratedModel] = [
         CuratedModel(
-            id: "mlx-community/Qwen3-1.7B-4bit",
-            displayName: "Qwen 3 · 1.7B", approxSizeGB: 1.0,
-            isVision: false, supportsReasoning: true, isRecommended: true
+            id: "mlx-community/Qwen3.5-2B-4bit",
+            displayName: "Qwen 3.5 · 2B", approxSizeGB: 1.7,
+            isVision: true, supportsReasoning: true, isRecommended: true
         ),
         CuratedModel(
-            id: "mlx-community/Qwen3-4B-4bit",
-            displayName: "Qwen 3 · 4B", approxSizeGB: 2.3,
-            isVision: false, supportsReasoning: true, isRecommended: true
+            id: "mlx-community/Qwen3.5-4B-4bit",
+            displayName: "Qwen 3.5 · 4B", approxSizeGB: 3.0,
+            isVision: true, supportsReasoning: true, isRecommended: true
         ),
-        // Same template as above: the smallest download, with noticeably
-        // weaker answers.
+        // Smallest download, with noticeably weaker answers.
         CuratedModel(
-            id: "mlx-community/Qwen3-0.6B-4bit",
-            displayName: "Qwen 3 · 0.6B", approxSizeGB: 0.34,
-            isVision: false, supportsReasoning: true, isRecommended: false
+            id: "mlx-community/Qwen3.5-0.8B-4bit",
+            displayName: "Qwen 3.5 · 0.8B", approxSizeGB: 0.6,
+            isVision: true, supportsReasoning: true, isRecommended: false
         ),
-        // Vision. Qwen 3 VL calls tools but doesn't reason; Gemma 3's
-        // template has neither.
+        // Gemma 4's template only opens its reasoning channel when
+        // `enable_thinking` is set — "Directo"/"Normal" both answer
+        // straight, only "Profundo" reasons.
         CuratedModel(
-            id: "mlx-community/Qwen3-VL-4B-Instruct-4bit",
-            displayName: "Qwen 3 VL · 4B", approxSizeGB: 3.1,
-            isVision: true, supportsReasoning: false, isRecommended: false
-        ),
-        CuratedModel(
-            id: "mlx-community/gemma-3-4b-it-qat-4bit",
-            displayName: "Gemma 3 · 4B", approxSizeGB: 3.0,
-            isVision: true, supportsReasoning: false, isRecommended: false
+            id: "mlx-community/gemma-4-e2b-it-4bit",
+            displayName: "Gemma 4 · E2B", approxSizeGB: 3.6,
+            isVision: true, supportsReasoning: true, isRecommended: false
         ),
     ]
 }

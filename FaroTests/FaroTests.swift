@@ -149,6 +149,15 @@ struct ThinkTagSplitterTests {
         #expect(result.reasoning == "unoYZreasoning")
         #expect(result.content == "Xfinal")
     }
+
+    /// Gemma 4 marks the same span with its own channel delimiters, split
+    /// across chunks the way real streaming does it — normalized to
+    /// `<think>`/`</think>` before the rest of the splitter ever sees them.
+    @Test func normalizesGemma4sChannelDelimitersSplitAcrossChunks() {
+        let result = run(["<|chan", "nel>thought\nplan<chan", "nel|>respuesta"])
+        #expect(result.reasoning == "\nplan")
+        #expect(result.content == "respuesta")
+    }
 }
 
 /// The `<think>` the chat template leaves open in the prompt itself —
@@ -801,18 +810,6 @@ struct ModelCapabilityProbeTests {
         // SmolLM3: prints `<tools>` but reads its list from `xml_tools`, so
         // a `tools` list handed to it never reaches the model.
         let template = #"{%- if xml_tools %}{{- 'function signatures within <tools></tools> XML tags' }}{%- endif %}"#
-        #expect(ModelCapabilityProbe.supportsTools(chatTemplate: template) == false)
-    }
-
-    @Test func rejectsATemplateThatRefusesAToolResultOnItsOwn() {
-        // Qwen3.5: reads `tools`, but throws when rendered without a user
-        // message — which is how `ChatSession` hands a tool's result back.
-        let template = #"""
-            {%- if tools %}{{- '<|im_start|>system\n# Tools' }}{%- endif %}
-            {%- if ns.multi_step_tool %}
-                {{- raise_exception('No user query found in messages.') }}
-            {%- endif %}
-            """#
         #expect(ModelCapabilityProbe.supportsTools(chatTemplate: template) == false)
     }
 
