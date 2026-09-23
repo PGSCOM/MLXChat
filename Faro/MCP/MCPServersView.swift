@@ -63,7 +63,7 @@ struct MCPServersView: View {
             }
             .sheet(isPresented: $showAddSheet) {
                 AddMCPServerSheet { name, url, token in
-                    modelContext.insert(MCPServerConfig(name: name, url: url, bearerToken: token))
+                    modelContext.insert(MCPServerConfig(name: name, url: url, token: token))
                 }
             }
             .alert(
@@ -123,6 +123,8 @@ struct MCPServersView: View {
             let server = servers[index]
             let id = server.id
             Task { await MCPConnectionManager.shared.disconnect(id) }
+            // The Keychain item doesn't go with the record on its own.
+            server.token = ""
             modelContext.delete(server)
         }
     }

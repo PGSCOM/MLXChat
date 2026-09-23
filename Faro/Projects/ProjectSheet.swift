@@ -60,12 +60,14 @@ struct ProjectSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Listo") {
-                        try? modelContext.save()
-                        invalidateSessions()
-                        dismiss()
-                    }
+                    Button("Listo") { dismiss() }
                 }
+            }
+            // Edits land on the project as they're made, so any way out —
+            // a swipe down included — has to apply them.
+            .onDisappear {
+                try? modelContext.save()
+                invalidateSessions()
             }
             .fileImporter(
                 isPresented: $showFileImporter,

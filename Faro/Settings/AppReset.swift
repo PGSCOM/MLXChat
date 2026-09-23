@@ -23,6 +23,7 @@ enum AppReset {
         for key in AppSettings.keys + ServerSettings.keys + VoiceSettings.keys {
             UserDefaults.standard.removeObject(forKey: key)
         }
+        Keychain.deleteAll()
 
         guard deletingModels else { return }
         for id in ModelCacheStore.downloadedIDs() {

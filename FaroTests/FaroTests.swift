@@ -521,3 +521,22 @@ struct AppResetTests {
         #expect(try context.fetchCount(FetchDescriptor<MCPServerConfig>()) == 0)
     }
 }
+
+/// An MCP token is a credential for someone else's server: it belongs in
+/// the Keychain, and one saved in the store before the move has to end up
+/// there rather than be lost. If the Keychain refused it, the token would
+/// stay in the store and the second expectation catches it.
+struct MCPTokenTests {
+    @Test func movesATokenSavedInTheStoreIntoTheKeychain() {
+        let server = MCPServerConfig(name: "Servidor", url: "https://example.com/mcp")
+        server.bearerToken = "de-antes"
+        #expect(server.token == "de-antes")
+
+        server.moveTokenToKeychain()
+        #expect(server.bearerToken.isEmpty)
+        #expect(server.token == "de-antes")
+
+        server.token = ""
+        #expect(server.token.isEmpty)
+    }
+}
