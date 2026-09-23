@@ -27,6 +27,7 @@ struct RootView: View {
         }
         .task {
             if selectedID == nil { selectedID = conversations.first?.id }
+            await reconnectMCPServers()
         }
     }
 
@@ -70,7 +71,27 @@ struct RootView: View {
 
     private func delete(_ conversation: Conversation) {
         if selectedID == conversation.id { selectedID = nil }
-        modelContext.delete(conversation)
+        let context = modelContext
+        Task {
+            await ChatViewModel.prepareForDeletion([conversation.id])
+            context.delete(conversation)
+        }
+    }
+
+    /// `isEnabled` survives a relaunch but the connection doesn't, so the
+    /// switch would read "on" while the model got none of its tools. One
+    /// that can't be reached is switched off, as the switch itself does.
+    /// Tokens saved before the Keychain move into it on the way.
+    private func reconnectMCPServers() async {
+        let servers = (try? modelContext.fetch(FetchDescriptor<MCPServerConfig>())) ?? []
+        for server in servers { server.moveTokenToKeychain() }
+        for server in servers where server.isEnabled {
+            do {
+                try await MCPConnectionManager.shared.connect(server.snapshot)
+            } catch {
+                server.isEnabled = false
+            }
+        }
     }
 
     /// `.nullify` on `Conversation.project` means its conversations survive

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 import Testing
 @testable import Faro
 
@@ -488,5 +489,54 @@ struct CodeHighlighterTests {
         let code = "let x = 1 // a comment with <html> & \"quotes\""
         let result = CodeHighlighter.highlight(code, language: "swift")
         #expect(result.map { String($0.characters) } == code)
+    }
+}
+
+/// "Restablecer Faro" has to leave the store truly empty — including a
+/// message that lost its conversation, which the cascade alone would miss.
+struct AppResetTests {
+    @Test @MainActor func erasesEveryRecordFromTheStore() throws {
+        let container = try ModelContainer(
+            for: Conversation.self, ChatMessage.self, Project.self, MCPServerConfig.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let context = container.mainContext
+        let project = Project(name: "Proyecto")
+        let conversation = Conversation(modelID: "mlx-community/test")
+        let message = ChatMessage(role: .user, content: "hola")
+        context.insert(project)
+        context.insert(conversation)
+        context.insert(message)
+        context.insert(ChatMessage(role: .assistant, content: "huérfano"))
+        context.insert(MCPServerConfig(name: "Servidor", url: "https://example.com/mcp"))
+        conversation.project = project
+        conversation.messages.append(message)
+        try context.save()
+
+        try AppReset.eraseStore(in: context)
+
+        #expect(try context.fetchCount(FetchDescriptor<Conversation>()) == 0)
+        #expect(try context.fetchCount(FetchDescriptor<ChatMessage>()) == 0)
+        #expect(try context.fetchCount(FetchDescriptor<Project>()) == 0)
+        #expect(try context.fetchCount(FetchDescriptor<MCPServerConfig>()) == 0)
+    }
+}
+
+/// An MCP token is a credential for someone else's server: it belongs in
+/// the Keychain, and one saved in the store before the move has to end up
+/// there rather than be lost. If the Keychain refused it, the token would
+/// stay in the store and the second expectation catches it.
+struct MCPTokenTests {
+    @Test func movesATokenSavedInTheStoreIntoTheKeychain() {
+        let server = MCPServerConfig(name: "Servidor", url: "https://example.com/mcp")
+        server.bearerToken = "de-antes"
+        #expect(server.token == "de-antes")
+
+        server.moveTokenToKeychain()
+        #expect(server.bearerToken.isEmpty)
+        #expect(server.token == "de-antes")
+
+        server.token = ""
+        #expect(server.token.isEmpty)
     }
 }

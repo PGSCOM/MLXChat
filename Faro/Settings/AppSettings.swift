@@ -6,6 +6,8 @@ import Foundation
 enum AppSettings {
     private static let systemPromptKey = "defaultSystemPrompt"
     private static let lastModelKey = "lastModelID"
+    /// Everything this enum stores, for `AppReset`.
+    static let keys = [systemPromptKey, lastModelKey]
 
     static var defaultSystemPrompt: String {
         get { UserDefaults.standard.string(forKey: systemPromptKey) ?? "" }

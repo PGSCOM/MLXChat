@@ -50,10 +50,12 @@ jobs:
         uses: actions/cache@v6
         with:
           path: DerivedData
-          key: ${{ runner.os }}-derived-data-${{ hashFiles('project.yml') }}-${{ github.run_id }}
+          # Own prefix: a bare `derived-data-` also matched the test job's
+          # simulator cache, whose Faro.app then got packaged as the IPA.
+          key: ${{ runner.os }}-derived-data-build-${{ hashFiles('project.yml') }}-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-derived-data-${{ hashFiles('project.yml') }}-
-            ${{ runner.os }}-derived-data-
+            ${{ runner.os }}-derived-data-build-${{ hashFiles('project.yml') }}-
+            ${{ runner.os }}-derived-data-build-
 
       - name: Build (unsigned)
         run: |
@@ -75,9 +77,11 @@ jobs:
 
       - name: Locate built app
         run: |
-          APP_PATH=$(find DerivedData/Build/Products -maxdepth 2 -name 'Faro.app' -print -quit)
-          if [ -z "$APP_PATH" ]; then
-            echo "::error::Faro.app not found under DerivedData/Build/Products"
+          # The exact device build, never whichever Faro.app `find` hits
+          # first: a restored cache can hold a simulator one too.
+          APP_PATH=DerivedData/Build/Products/Release-iphoneos/Faro.app
+          if [ ! -d "$APP_PATH" ]; then
+            echo "::error::$APP_PATH not found"
             find DerivedData/Build/Products -maxdepth 2
             exit 1
           fi
