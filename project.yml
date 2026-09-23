@@ -33,6 +33,12 @@ packages:
   FlyingFox:
     url: https://github.com/swhitty/FlyingFox
     from: 0.27.1
+  SwiftMath:
+    url: https://github.com/mgriebling/SwiftMath.git
+    from: 1.7.0
+  Highlightr:
+    url: https://github.com/raspu/Highlightr
+    from: 2.3.0
 
 targets:
   Faro:
@@ -60,6 +66,10 @@ targets:
         product: FlyingFox
       - package: FlyingFox
         product: FlyingSocks
+      - package: SwiftMath
+        product: SwiftMath
+      - package: Highlightr
+        product: Highlightr
     info:
       path: Generated/Info.plist
       properties:

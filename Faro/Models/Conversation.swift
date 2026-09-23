@@ -11,6 +11,10 @@ final class Conversation {
     var systemPrompt: String
     var createdAt: Date
     var thinkingEffortRaw: String = ThinkingEffort.normal.rawValue
+    /// The leaf of the branch currently shown. Nil until the conversation
+    /// is first opened under branching — `ChatViewModel.init` threads any
+    /// pre-existing flat history into one chain and sets this once.
+    var activeLeafID: UUID?
 
     var thinkingEffort: ThinkingEffort {
         get { ThinkingEffort(rawValue: thinkingEffortRaw) ?? .normal }

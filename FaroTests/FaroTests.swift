@@ -157,6 +157,90 @@ struct PromptOpensThinkTests {
     }
 }
 
+/// Pure tree operations over a conversation's flat message array — no
+/// SwiftData context needed, since these only read `parentID`/`createdAt`.
+struct MessageTreeTests {
+    private func message(_ role: MessageRole, parent: ChatMessage? = nil, offset: TimeInterval) -> ChatMessage {
+        let message = ChatMessage(role: role, content: "", parentID: parent?.id)
+        message.createdAt = Date(timeIntervalSince1970: offset)
+        return message
+    }
+
+    @Test func pathFollowsParentLinksUpToTheRoot() {
+        let root = message(.user, offset: 0)
+        let reply = message(.assistant, parent: root, offset: 1)
+        let followUp = message(.user, parent: reply, offset: 2)
+        let all = [followUp, root, reply]
+
+        #expect(MessageTree.path(to: followUp.id, in: all).map(\.id) == [root.id, reply.id, followUp.id])
+    }
+
+    @Test func siblingsComeOutOldestFirst() {
+        let root = message(.user, offset: 0)
+        let second = message(.assistant, parent: root, offset: 2)
+        let first = message(.assistant, parent: root, offset: 1)
+        let all = [root, second, first]
+
+        #expect(MessageTree.siblings(of: second, in: all).map(\.id) == [first.id, second.id])
+    }
+
+    @Test func aMessageWithNoSiblingsReturnsJustItself() {
+        let root = message(.user, offset: 0)
+        #expect(MessageTree.siblings(of: root, in: [root]).map(\.id) == [root.id])
+    }
+
+    @Test func latestLeafDescendsThroughTheNewestChildAtEachStep() {
+        let root = message(.user, offset: 0)
+        let oldReply = message(.assistant, parent: root, offset: 1)
+        let newReply = message(.assistant, parent: root, offset: 2)
+        let grandchild = message(.user, parent: newReply, offset: 3)
+        let all = [root, oldReply, newReply, grandchild]
+
+        #expect(MessageTree.latestLeaf(from: root, in: all).id == grandchild.id)
+    }
+
+    @Test func threadLegacyChainsAFlatListByCreationOrder() {
+        let first = message(.user, offset: 0)
+        let second = message(.assistant, offset: 1)
+        let third = message(.user, offset: 2)
+        let all = [third, first, second]
+
+        MessageTree.threadLegacy(all)
+
+        #expect(first.parentID == nil)
+        #expect(second.parentID == first.id)
+        #expect(third.parentID == second.id)
+    }
+
+    @Test func threadLegacyLeavesAnAlreadyLinkedMessagesParentAlone() {
+        // `reply` already has a real parent; threading only ever links
+        // messages that are still roots (`parentID == nil`), so it's
+        // never touched even though it sits between two of them by time.
+        let root = message(.user, offset: 0)
+        let reply = message(.assistant, parent: root, offset: 1)
+        let laterRoot = message(.user, offset: 2)
+        let all = [root, reply, laterRoot]
+
+        MessageTree.threadLegacy(all)
+
+        #expect(reply.parentID == root.id)
+        #expect(laterRoot.parentID == root.id)
+    }
+
+    @Test func promptTextReproducesTheOldInlineFormatWhenThereIsAnAttachment() {
+        let message = ChatMessage(
+            role: .user, content: "Resúmelo",
+            attachmentName: "notas.txt", attachmentText: "contenido del archivo"
+        )
+        #expect(message.promptText == "Archivo adjunto: notas.txt\n\ncontenido del archivo\n\n---\n\nResúmelo")
+    }
+
+    @Test func promptTextIsJustTheContentWithNoAttachment() {
+        let message = ChatMessage(role: .user, content: "Hola")
+        #expect(message.promptText == "Hola")
+    }
+}
+
 struct ModelLoadStatusFormatterTests {
     @Test func reportsProgressWithoutAnEstimatedTimeLeft() {
         let status = ModelLoadStatus(
@@ -590,5 +674,153 @@ struct ModelCapabilityProbeTests {
         let result = ModelCapabilityProbe.chatTemplate(fromTokenizerConfigData: data)
         #expect(result?.contains("{{ a }}") == true)
         #expect(result?.contains("{{ b }}") == true)
+    }
+}
+
+/// The regression from issue #5: `AttributedString(markdown:)` parses
+/// headings and paragraphs into `presentationIntent`, but rendering the
+/// whole document in one `Text` drops that structure — a heading and the
+/// paragraph after it collapsed into one run-on block with no separator.
+struct MarkdownBlockTests {
+    private func kinds(_ blocks: [MarkdownBlock]) -> [MarkdownBlock.Kind] {
+        blocks.map(\.kind)
+    }
+
+    private func strings(_ blocks: [MarkdownBlock]) -> [String] {
+        blocks.map { String($0.text.characters) }
+    }
+
+    @Test func splitsAHeadingFromTheParagraphAfterIt() {
+        let blocks = MarkdownBlock.blocks(of: "# Título\n\nHola")
+        #expect(kinds(blocks) == [.heading(level: 1), .paragraph])
+        #expect(strings(blocks) == ["Título", "Hola"])
+    }
+
+    @Test func keepsConsecutiveParagraphsSeparate() {
+        let blocks = MarkdownBlock.blocks(of: "Uno\n\nDos")
+        #expect(kinds(blocks) == [.paragraph, .paragraph])
+        #expect(strings(blocks) == ["Uno", "Dos"])
+    }
+
+    @Test func marksOrderedAndUnorderedListItems() {
+        let ordered = MarkdownBlock.blocks(of: "1. Primero\n2. Segundo")
+        #expect(kinds(ordered) == [.listItem(marker: "1.", depth: 1), .listItem(marker: "2.", depth: 1)])
+
+        let unordered = MarkdownBlock.blocks(of: "- Uno\n- Dos")
+        #expect(kinds(unordered) == [.listItem(marker: "•", depth: 1), .listItem(marker: "•", depth: 1)])
+    }
+
+    @Test func marksAFencedCodeBlock() {
+        let blocks = MarkdownBlock.blocks(of: "```\nlet x = 1\n```")
+        #expect(kinds(blocks) == [.code(language: nil)])
+        #expect(strings(blocks) == ["let x = 1"])
+    }
+
+    @Test func capturesTheFencesLanguageHint() {
+        let blocks = MarkdownBlock.blocks(of: "```swift\nlet x = 1\n```")
+        #expect(kinds(blocks) == [.code(language: "swift")])
+    }
+
+    @Test func plainTextStaysOneUntouchedParagraph() {
+        let blocks = MarkdownBlock.blocks(of: "sin formato")
+        #expect(kinds(blocks) == [.paragraph])
+        #expect(strings(blocks) == ["sin formato"])
+    }
+
+    @Test func rendersAFencedDisplayEquation() {
+        let blocks = MarkdownBlock.blocks(of: "$$\nx^2\n$$")
+        #expect(kinds(blocks) == [.equation("x^2")])
+    }
+
+    @Test func rendersASingleLineDoubleDollarEquation() {
+        let blocks = MarkdownBlock.blocks(of: "$$ x^2 $$")
+        #expect(kinds(blocks) == [.equation("x^2")])
+    }
+
+    @Test func rendersAWholeLineDollarEquationAsDisplay() {
+        let blocks = MarkdownBlock.blocks(of: "$E = mc^2$")
+        #expect(kinds(blocks) == [.equation("E = mc^2")])
+    }
+
+    @Test func aDollarSignInsideASentenceStaysLiteral() {
+        let blocks = MarkdownBlock.blocks(of: "Cuesta $5 y también $10.")
+        #expect(kinds(blocks) == [.paragraph])
+    }
+
+    private func plainText(_ cell: MarkdownBlock.TableCell) -> String? {
+        if case .text(let attr) = cell { return String(attr.characters) }
+        return nil
+    }
+
+    @Test func parsesAGfmTableWithAlignment() {
+        let blocks = MarkdownBlock.blocks(of: "| A | B |\n| --- | ---: |\n| 1 | 2 |")
+        #expect(blocks.count == 1)
+        guard case .table(let header, let alignment, let rows) = blocks[0].kind else {
+            Issue.record("se esperaba un bloque de tabla")
+            return
+        }
+        #expect(header.map(plainText) == ["A", "B"])
+        #expect(alignment == [.leading, .trailing])
+        #expect(rows.map { row in row.map(plainText) } == [["1", "2"]])
+    }
+
+    @Test func rendersAWholeCellEquationInATable() {
+        let blocks = MarkdownBlock.blocks(of: "| A | B |\n| --- | --- |\n| $x^2$ | normal |")
+        guard case .table(_, _, let rows) = blocks[0].kind, let row = rows.first else {
+            Issue.record("se esperaba una fila de tabla")
+            return
+        }
+        #expect(row[0] == .equation("x^2"))
+        #expect(plainText(row[1]) == "normal")
+    }
+
+    @Test func parsesARawLatexTabularEnvironment() {
+        // The regression this covers: a model asked to write actual LaTeX
+        // (not Markdown) reaches for \begin{tabular}, not | pipes — issue
+        // reported as "funciona, pero en este caso no".
+        let markdown = #"""
+        \begin{tabular}{|c|c|}
+        \hline
+        Columna 1 & Columna 2 \\
+        \hline
+        Ecuación 1 & \( E = mc^2 \) \\
+        \hline
+        Ecuación 2 & \( F = ma \) \\
+        \hline
+        \end{tabular}
+        """#
+        let blocks = MarkdownBlock.blocks(of: markdown)
+        guard case .table(let header, let alignment, let rows) = blocks[0].kind else {
+            Issue.record("se esperaba un bloque de tabla")
+            return
+        }
+        #expect(header.map(plainText) == ["Columna 1", "Columna 2"])
+        #expect(alignment == [.center, .center])
+        #expect(rows.count == 2)
+        #expect(plainText(rows[0][0]) == "Ecuación 1")
+        #expect(rows[0][1] == .equation("E = mc^2"))
+        #expect(rows[1][1] == .equation("F = ma"))
+    }
+
+    @Test func doesNotTreatALatexTableInsideACodeFenceAsARealTable() {
+        let markdown = "```latex\n\\begin{tabular}{|c|c|}\n\\hline\nA & B \\\\\n\\end{tabular}\n```"
+        let blocks = MarkdownBlock.blocks(of: markdown)
+        #expect(kinds(blocks) == [.code(language: "latex")])
+    }
+
+    @Test func doesNotTreatATableInsideACodeFenceAsARealTable() {
+        let blocks = MarkdownBlock.blocks(of: "```\n| a | b |\n| - | - |\n```")
+        #expect(kinds(blocks) == [.code(language: nil)])
+    }
+}
+
+/// The regression that matters for a highlighter: it must recolor code,
+/// never rewrite it — a broken HTML-entity decode or a dropped character
+/// would silently corrupt what the copy button then puts on the pasteboard.
+struct CodeHighlighterTests {
+    @Test @MainActor func highlightingPreservesTheOriginalCodeText() {
+        let code = "let x = 1 // a comment with <html> & \"quotes\""
+        let result = CodeHighlighter.highlight(code, language: "swift")
+        #expect(result.map { String($0.characters) } == code)
     }
 }
