@@ -22,11 +22,6 @@ enum VoiceSettings {
         set { UserDefaults.standard.set(newValue, forKey: voiceKey) }
     }
 
-    static func reset() {
-        UserDefaults.standard.removeObject(forKey: localeKey)
-        UserDefaults.standard.removeObject(forKey: voiceKey)
-    }
-
     static var recognitionLocale: Locale {
         recognitionLocaleID.isEmpty ? .current : Locale(identifier: recognitionLocaleID)
     }

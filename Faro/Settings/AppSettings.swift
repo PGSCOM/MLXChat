@@ -19,9 +19,4 @@ enum AppSettings {
         get { UserDefaults.standard.string(forKey: lastModelKey) ?? "" }
         set { UserDefaults.standard.set(newValue, forKey: lastModelKey) }
     }
-
-    static func reset() {
-        UserDefaults.standard.removeObject(forKey: systemPromptKey)
-        UserDefaults.standard.removeObject(forKey: lastModelKey)
-    }
 }
