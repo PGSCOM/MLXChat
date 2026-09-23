@@ -48,13 +48,16 @@ struct ThinkTagSplitter {
         var reclaimedContentLength = 0
     }
 
-    /// ponytail: real content written right before a tool call, with no
-    /// other block boundary between it and the next implicitly reopened
-    /// block, is indistinguishable in the text stream from that block's own
-    /// leaked reasoning — both are "content since the last close". Upgrade
-    /// path if a real model hits it: have `ChatViewModel`'s `toolCallTask`
-    /// call a new `splitter.commitContent()` on `.started`, since the
-    /// tool-call events already mark exactly when a call begins.
+    /// Call when a tool call starts: real content written right before it
+    /// ("Voy a buscar…") would otherwise be indistinguishable from the next
+    /// implicitly-reopened block's own leaked reasoning, since both are just
+    /// "content since the last close" — this draws the boundary explicitly
+    /// instead of guessing at it.
+    mutating func commitContent() {
+        hasSeenOpenTag = false
+        contentSinceSegmentStart = 0
+    }
+
     mutating func consume(_ chunk: String) -> Delta {
         buffer += chunk
         var delta = Delta()

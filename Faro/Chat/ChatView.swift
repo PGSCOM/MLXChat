@@ -249,6 +249,10 @@ struct ChatView: View {
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: messages.last?.content) { scrollToBottom(proxy) }
             .onChange(of: messages.last?.reasoning) { scrollToBottom(proxy) }
+            // Steps only change at block boundaries (a tool card appearing,
+            // a reasoning block closing) — `reasoning` above already covers
+            // a block's own growth token by token.
+            .onChange(of: messages.last?.stepsRaw) { scrollToBottom(proxy) }
             .onChange(of: messages.count) { proxy.scrollTo("bottom", anchor: .bottom) }
         }
     }

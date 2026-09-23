@@ -10,6 +10,7 @@ enum TurnPhase: Equatable, Sendable {
     case idle
     case preparing
     case thinking
+    case usingTool
     case writing
 }
 
@@ -254,9 +255,7 @@ final class ChatViewModel {
             if freshSession {
                 await InferenceEngine.shared.invalidateSession(conversationID: conversationID)
             }
-            var splitter = ThinkTagSplitter()
-            let streamStartedAt = Date()
-            var reasoningStartedAt: Date?
+            let recorder = TurnRecorder(message: assistantMessage)
             var stoppedAtTokenLimit = false
             // Registered before the stream starts, so a tool call on the
             // very first turn isn't missed. Runs concurrently with the
@@ -268,13 +267,12 @@ final class ChatViewModel {
             let toolCallTask = Task {
                 for await event in await InferenceEngine.shared.toolCallEvents(conversationID: conversationID) {
                     switch event {
-                    case .started(let id, let name, let isSkill):
-                        assistantMessage.toolCalls.append(ToolCallRecord(id: id, name: name, isSkill: isSkill, status: .running))
+                    case .started(let record):
+                        recorder.toolStarted(record)
+                        enter(.usingTool)
                     case .finished(let id, let status):
-                        guard let index = assistantMessage.toolCalls.firstIndex(where: { $0.id == id }) else { continue }
-                        var calls = assistantMessage.toolCalls
-                        calls[index].status = status
-                        assistantMessage.toolCalls = calls
+                        recorder.toolFinished(id: id, status: status)
+                        enter(.thinking)
                     }
                 }
             }
@@ -298,29 +296,7 @@ final class ChatViewModel {
                 for try await generation in stream {
                     switch generation {
                     case .chunk(let piece):
-                        let delta = splitter.consume(piece)
-                        if delta.contentWasReasoning {
-                            // A bare `</think>` arrived: move only what
-                            // leaked since the last block boundary, not the
-                            // whole bubble — which can also hold real answer
-                            // text an earlier *explicit* block already
-                            // vouched for (see `Delta.reclaimedContentLength`).
-                            let content = assistantMessage.content
-                            let cut = content.index(content.endIndex, offsetBy: -delta.reclaimedContentLength)
-                            assistantMessage.reasoning = (assistantMessage.reasoning ?? "") + content[cut...]
-                            assistantMessage.content = String(content[..<cut])
-                            reasoningStartedAt = reasoningStartedAt ?? streamStartedAt
-                        }
-                        if !delta.reasoning.isEmpty {
-                            if reasoningStartedAt == nil { reasoningStartedAt = .now }
-                            enter(.thinking)
-                            assistantMessage.reasoning = (assistantMessage.reasoning ?? "") + delta.reasoning
-                        }
-                        if !delta.content.isEmpty {
-                            closeReasoning(on: assistantMessage, startedAt: reasoningStartedAt)
-                            enter(.writing)
-                            assistantMessage.content += delta.content
-                        }
+                        if let phase = recorder.consume(piece) { enter(phase) }
                     case .info(let info):
                         assistantMessage.tokensPerSecond = info.tokensPerSecond
                         stoppedAtTokenLimit = info.stopReason == .length
@@ -339,15 +315,9 @@ final class ChatViewModel {
             downloadCoordinator.finishLoad(id: modelID)
 
             // Whatever the splitter was still holding back as possible
-            // tag-boundary lookahead is now final — release it.
-            let tail = splitter.finish()
-            if !tail.reasoning.isEmpty {
-                assistantMessage.reasoning = (assistantMessage.reasoning ?? "") + tail.reasoning
-            }
-            if !tail.content.isEmpty {
-                assistantMessage.content += tail.content
-            }
-            closeReasoning(on: assistantMessage, startedAt: reasoningStartedAt)
+            // tag-boundary lookahead is now final — release it, and fail
+            // any tool call a cancellation caught mid-flight.
+            recorder.finish()
 
             if stoppedAtTokenLimit {
                 errorMessage = assistantMessage.content.isEmpty
@@ -373,7 +343,9 @@ final class ChatViewModel {
             // session may already hold this turn's prompt (and, after a
             // relaunch, only the history up to it), so drop it: the next
             // turn rebuilds from the branch actually on screen.
-            if assistantMessage.content.isEmpty && (assistantMessage.reasoning ?? "").isEmpty {
+            if assistantMessage.content.isEmpty && (assistantMessage.reasoning ?? "").isEmpty
+                && assistantMessage.steps.isEmpty
+            {
                 conversation.messages.removeAll { $0.id == assistantMessage.id }
                 modelContext.delete(assistantMessage)
                 conversation.activeLeafID = MessageTree.latestLeaf(from: user, in: conversation.messages).id
@@ -455,15 +427,6 @@ final class ChatViewModel {
         guard phase != newPhase else { return }
         phase = newPhase
         phaseStartedAt = .now
-    }
-
-    /// Called every time content resumes after reasoning — `reasoningStartedAt`
-    /// stays pinned to the *first* segment's start, so a turn with more than
-    /// one reasoning block (a tool call in between) keeps recomputing the
-    /// running total instead of freezing it at the first block's duration.
-    private func closeReasoning(on message: ChatMessage, startedAt: Date?) {
-        guard let startedAt else { return }
-        message.reasoningSeconds = Date().timeIntervalSince(startedAt)
     }
 
     /// The sidebar is useless when every row reads "Nueva conversación",

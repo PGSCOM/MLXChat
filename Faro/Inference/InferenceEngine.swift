@@ -195,16 +195,20 @@ actor InferenceEngine {
             : { @Sendable (call: ToolCall) async throws -> String in
                 let callID = UUID()
                 let skill = SkillStore.all.first { $0.mode == .automatic && $0.toolName == call.function.name }
-                await self.reportToolCall(
-                    conversationID: conversationID,
-                    .started(id: callID, name: skill?.name ?? call.function.name, isSkill: skill != nil)
+                let record = ToolCallRecord(
+                    id: callID, name: skill?.name ?? call.function.name, isSkill: skill != nil, status: .running,
+                    server: skill == nil ? await MCPConnectionManager.shared.serverName(forTool: call.function.name) : nil,
+                    arguments: Self.prettyPrintedArguments(call.function.arguments)
                 )
+                await self.reportToolCall(conversationID: conversationID, .started(record))
                 do {
                     // A skill call resolves right here — its "result" is its
                     // instructions, never sent over MCP.
                     let result: String
                     if let skill { result = skill.instructions } else { result = try await MCPConnectionManager.shared.dispatch(call) }
-                    let preview = String(result.prefix(160))
+                    // A few KB, not 160 characters: the expanded card is meant
+                    // to show the actual response, not a stub of it.
+                    let preview = result.count > 4000 ? String(result.prefix(4000)) + "…" : result
                     await self.reportToolCall(conversationID: conversationID, .finished(id: callID, status: .succeeded(preview: preview)))
                     return result
                 } catch {
@@ -247,6 +251,21 @@ actor InferenceEngine {
 
     private func reportToolCall(conversationID: UUID, _ event: ToolCallEvent) {
         toolCallContinuations[conversationID]?.yield(event)
+    }
+
+    /// A tool call's arguments, pretty-printed for the expanded card — `nil`
+    /// for a call with none, rather than the noise of an empty `{}`.
+    private static func prettyPrintedArguments(_ arguments: [String: JSONValue]) -> String? {
+        guard !arguments.isEmpty,
+            let data = try? JSONEncoder().encode(arguments)
+        else { return nil }
+        // Round-tripped through `JSONSerialization` for stable key order and
+        // indentation — `JSONEncoder`'s own `.prettyPrinted` doesn't sort keys.
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+            let pretty = try? JSONSerialization.data(
+                withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        else { return nil }
+        return String(data: pretty, encoding: .utf8)
     }
 
     /// Skills and MCP servers are global — a single `UserDefaults`-backed

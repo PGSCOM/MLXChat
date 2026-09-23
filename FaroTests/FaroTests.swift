@@ -105,6 +105,20 @@ struct ThinkTagSplitterTests {
         #expect(!delta.contentWasReasoning)
     }
 
+    /// Text written right before a tool call ("Voy a llamar a una
+    /// herramienta.") must survive as content even when the *next* block
+    /// reopens implicitly — `TurnRecorder.toolStarted` calls this exactly at
+    /// the call boundary so the next implicit close doesn't sweep it up.
+    @Test func commitContentPreventsThePreCallTextFromBeingReclaimed() {
+        var splitter = ThinkTagSplitter()
+        _ = splitter.consume("razono</think>Voy a llamar a una herramienta.")
+        splitter.commitContent()
+        let delta = splitter.consume("nueva razón</think>final")
+        #expect(!delta.contentWasReasoning)
+        #expect(delta.reasoning == "nueva razón")
+        #expect(delta.content == "final")
+    }
+
     /// A reasoning model that calls a tool mid-turn: `InferenceEngine`
     /// resolves the call inside `ChatSession` and only streams the clean
     /// continuation onward, but if that continuation's chat template also
@@ -499,19 +513,159 @@ struct ToolCallRecordTests {
         #expect(decoded == calls)
     }
 
-    @Test func chatMessageDefaultsToNoToolCalls() {
+    @Test func chatMessageDefaultsToNoSteps() {
         let message = ChatMessage(role: .assistant, content: "")
-        #expect(message.toolCalls.isEmpty)
+        #expect(message.steps.isEmpty)
     }
 
-    @Test func chatMessageToolCallsRoundTripThroughTheStoredRawString() {
+    @Test func chatMessageStepsRoundTripThroughTheStoredRawString() {
         let message = ChatMessage(role: .assistant, content: "")
         let id = UUID()
-        message.toolCalls = [ToolCallRecord(id: id, name: "search_web", isSkill: false, status: .running)]
-        #expect(message.toolCalls == [ToolCallRecord(id: id, name: "search_web", isSkill: false, status: .running)])
+        let record = ToolCallRecord(id: id, name: "search_web", isSkill: false, status: .running)
+        message.steps = [TurnStep(id: id, kind: .tool(record), contentOffset: 0)]
+        guard case .tool(let stored) = message.steps[0].kind else {
+            Issue.record("esperaba un paso de herramienta")
+            return
+        }
+        #expect(stored == record)
 
-        message.toolCalls[0].status = .succeeded(preview: "3 resultados")
-        #expect(message.toolCalls[0].status == .succeeded(preview: "3 resultados"))
+        var steps = message.steps
+        guard case .tool(var updated) = steps[0].kind else {
+            Issue.record("esperaba un paso de herramienta")
+            return
+        }
+        updated.status = .succeeded(preview: "3 resultados")
+        steps[0].kind = .tool(updated)
+        message.steps = steps
+        guard case .tool(let final) = message.steps[0].kind else {
+            Issue.record("esperaba un paso de herramienta")
+            return
+        }
+        #expect(final.status == .succeeded(preview: "3 resultados"))
+    }
+
+    @Test func argumentsSummaryJoinsKeysAlphabetically() {
+        let record = ToolCallRecord(
+            id: UUID(), name: "tavily_search", isSkill: false, status: .running,
+            arguments: #"{"query":"bitcoin","max_results":5}"#
+        )
+        #expect(record.argumentsSummary == "max_results: 5 · query: bitcoin")
+    }
+
+    @Test func argumentsSummaryIsNilWithoutArguments() {
+        let record = ToolCallRecord(id: UUID(), name: "tavily_search", isSkill: false, status: .running)
+        #expect(record.argumentsSummary == nil)
+    }
+
+    @Test func legacyMessageWithOnlyReasoningSynthesizesOneStep() {
+        // Messages saved before steps existed (any conversation from
+        // `master`) have `reasoning` but no `stepsRaw` — they must still
+        // render their reasoning card instead of losing it.
+        let message = ChatMessage(role: .assistant, content: "Respuesta", reasoning: "pensé esto")
+        message.reasoningSeconds = 4.5
+        #expect(message.steps.count == 1)
+        guard case .reasoning(let start, let end) = message.steps[0].kind else {
+            Issue.record("esperaba un paso de razonamiento")
+            return
+        }
+        #expect(start == 0)
+        #expect(end == "pensé esto".count)
+        #expect(message.steps[0].seconds == 4.5)
+    }
+}
+
+/// `TurnRecorder` is where a raw stream turns into `message.content` /
+/// `message.reasoning` plus the ordered steps the UI replays — these check
+/// the ordering directly through `TurnStep.timeline`, the same read the
+/// chat bubble does.
+struct TurnRecorderTests {
+    @Test @MainActor func recordsReasoningToolReasoningAnswerInOrder() {
+        let message = ChatMessage(role: .assistant, content: "")
+        let recorder = TurnRecorder(message: message)
+        _ = recorder.consume("<think>plan</think>")
+        let call = ToolCallRecord(id: UUID(), name: "tavily_search", isSkill: false, status: .running)
+        recorder.toolStarted(call)
+        recorder.toolFinished(id: call.id, status: .succeeded(preview: "3 resultados"))
+        _ = recorder.consume("<think>otra</think>Respuesta")
+        recorder.finish()
+
+        #expect(message.content == "Respuesta")
+        let timeline = TurnStep.timeline(content: message.content, reasoning: message.reasoning ?? "", steps: message.steps)
+        #expect(timeline.count == 4)
+        guard case .step(_, let firstReasoning) = timeline[0] else {
+            Issue.record("esperaba razonamiento")
+            return
+        }
+        #expect(firstReasoning == "plan")
+        guard case .step(let toolStep, _) = timeline[1], case .tool(let record) = toolStep.kind else {
+            Issue.record("esperaba una herramienta")
+            return
+        }
+        #expect(record.status == .succeeded(preview: "3 resultados"))
+        guard case .step(_, let secondReasoning) = timeline[2] else {
+            Issue.record("esperaba razonamiento")
+            return
+        }
+        #expect(secondReasoning == "otra")
+        guard case .text(let text) = timeline[3] else {
+            Issue.record("esperaba texto")
+            return
+        }
+        #expect(text == "Respuesta")
+    }
+
+    /// `toolStarted` draws an explicit segment boundary so text written
+    /// right before the call ("Voy a buscar.") survives as content instead
+    /// of being swept up when the post-tool reasoning reopens implicitly.
+    @Test @MainActor func toolStartCommitsPendingContentBeforeTheNextImplicitBlock() {
+        let message = ChatMessage(role: .assistant, content: "")
+        let recorder = TurnRecorder(message: message)
+        _ = recorder.consume("Voy a buscar.")
+        let call = ToolCallRecord(id: UUID(), name: "tavily_search", isSkill: false, status: .running)
+        recorder.toolStarted(call)
+        recorder.toolFinished(id: call.id, status: .succeeded(preview: "ok"))
+        _ = recorder.consume("pienso</think>Listo")
+        recorder.finish()
+
+        #expect(message.content == "Voy a buscar.Listo")
+        let timeline = TurnStep.timeline(content: message.content, reasoning: message.reasoning ?? "", steps: message.steps)
+        #expect(timeline.count == 4)
+        guard case .text(let first) = timeline[0] else {
+            Issue.record("esperaba texto")
+            return
+        }
+        #expect(first == "Voy a buscar.")
+        guard case .step(let toolStep, _) = timeline[1], case .tool = toolStep.kind else {
+            Issue.record("esperaba una herramienta")
+            return
+        }
+        guard case .step(_, let reasoning) = timeline[2] else {
+            Issue.record("esperaba razonamiento")
+            return
+        }
+        #expect(reasoning == "pienso")
+        guard case .text(let last) = timeline[3] else {
+            Issue.record("esperaba texto")
+            return
+        }
+        #expect(last == "Listo")
+    }
+
+    /// A cancellation can land between a tool call starting and its own
+    /// `.finished` event arriving — `finish()` is the safety net that keeps
+    /// the card from spinning forever.
+    @Test @MainActor func finishFailsAToolCallStillRunning() {
+        let message = ChatMessage(role: .assistant, content: "")
+        let recorder = TurnRecorder(message: message)
+        let call = ToolCallRecord(id: UUID(), name: "tavily_search", isSkill: false, status: .running)
+        recorder.toolStarted(call)
+        recorder.finish()
+
+        guard case .tool(let record) = message.steps[0].kind else {
+            Issue.record("esperaba una herramienta")
+            return
+        }
+        #expect(record.status == .failed("Cancelada"))
     }
 }
 

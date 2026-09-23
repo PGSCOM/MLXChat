@@ -31,6 +31,7 @@ actor MCPConnectionManager {
     private var clients: [UUID: Client] = [:]
     private var toolOwners: [String: UUID] = [:]
     private var cachedSpecs: [UUID: [ToolSpec]] = [:]
+    private var serverNames: [UUID: String] = [:]
 
     private init() {}
 
@@ -59,6 +60,7 @@ actor MCPConnectionManager {
 
         let (tools, _) = try await client.listTools()
         cachedSpecs[config.id] = tools.map { MCPToolBridge.toolSpec(for: $0) }
+        serverNames[config.id] = config.name
         toolOwners = toolOwners.filter { $0.value != config.id }
         for tool in tools { toolOwners[tool.name] = config.id }
         return tools.map { MCPToolSummary(name: $0.name, description: $0.description ?? "") }
@@ -67,6 +69,7 @@ actor MCPConnectionManager {
     func disconnect(_ id: UUID) {
         clients[id] = nil
         cachedSpecs[id] = nil
+        serverNames[id] = nil
         toolOwners = toolOwners.filter { $0.value != id }
     }
 
@@ -74,6 +77,13 @@ actor MCPConnectionManager {
     /// straight to `ChatSession(tools:)`.
     func enabledToolSpecs() -> [ToolSpec] {
         Array(cachedSpecs.values.joined())
+    }
+
+    /// Which connected server owns a tool name, for the call card — `nil`
+    /// for an unknown tool (shouldn't happen, dispatch is fail-closed) or a
+    /// skill, which never goes through here.
+    func serverName(forTool name: String) -> String? {
+        toolOwners[name].flatMap { serverNames[$0] }
     }
 
     func dispatch(_ call: ToolCall) async throws -> String {

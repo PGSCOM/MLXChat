@@ -128,6 +128,38 @@ and since that text has already been streamed out as content, the delta raises
 `contentWasReasoning` and every consumer moves what it already emitted into
 reasoning. Streaming immediately and correcting beats stalling the stream.
 
+### Replaying a turn in order: `TurnRecorder` and `TurnStep`
+
+A turn with tool calls thinks, calls a tool, thinks again, then answers —
+`ChatViewModel.startTurn` needs the bubble to show exactly that sequence, not
+one reasoning blob followed by every tool card at the end. `TurnRecorder`
+(`Faro/Inference/TurnRecorder.swift`) is the one place that owns the turn's
+`ThinkTagSplitter` and writes both `ChatMessage.content`/`.reasoning` and its
+ordered `steps: [TurnStep]` — a `.reasoning(start:end:)` range into
+`.reasoning`, or a `.tool(ToolCallRecord)`, each carrying a `contentOffset`
+(how much of `.content` existed when it started) that says where it slots
+back in. A step only records where it sits, never a copy of the text, so
+`stepsRaw` only changes at block boundaries, not per token; `TurnStep.timeline`
+is the pure function (`MessageView` and the tests both call it) that
+interleaves `content`/`reasoning`/`steps` back into display order.
+
+The tool-call listener in `startTurn` calls `recorder.toolStarted`/
+`.toolFinished` directly instead of mutating `ChatMessage` itself, because it
+has to close whatever reasoning step is open *before* the call — Qwen3 calls a
+tool right after `</think>` with no content in between, so the generation
+loop's own `consume()` would never see a boundary there. `toolStarted` also
+calls `splitter.commitContent()`, which draws that same boundary inside the
+splitter, so text written just before the call (e.g. "Voy a buscar…") isn't
+later reclaimed as the *next* implicitly-reopened block's leaked reasoning.
+`recorder.finish()` is the safety net for a cancellation that lands between a
+call starting and its own `.finished` event arriving — it fails any step still
+`.running` instead of leaving its card spinning forever.
+
+A message saved before any of this existed (`reasoning`/`reasoningSeconds`
+from `master`, no `stepsRaw`) has no on-disk data to migrate — `ChatMessage.steps`
+synthesizes one reasoning step covering all of it on read, so an old
+conversation renders exactly as it always did.
+
 ### The second backend: Apple Foundation
 
 `AppleFoundationEngine` (`Faro/Inference/`) wraps Apple's on-device model
@@ -202,6 +234,16 @@ MLXLMCommon's (`JSONValue`/`ToolSpec`) — round-trips arguments through actual
 JSON encoding rather than a hand-written case-by-case converter. Tool-call
 routing is fail-closed by MLXLMCommon's own design: only tool names present
 in the schemas handed to `ChatSession(tools:)` ever reach `dispatch`.
+
+The `toolDispatch` closure built in `InferenceEngine.session` reports a
+`ToolCallEvent.started` carrying a full `ToolCallRecord` — name, which server
+owns it (`MCPConnectionManager.serverName(forTool:)`), and its arguments
+pretty-printed — before calling `MCPConnectionManager.dispatch`/running a
+skill, so the chat bubble can show what was actually asked, not just that a
+call happened. `.finished` carries the result (a few KB, not a stub) or the
+error. Both cross the actor boundary as `Sendable` events on
+`toolCallEvents(conversationID:)`, consumed by `TurnRecorder` in
+`ChatViewModel.startTurn` — see "Replaying a turn in order" above.
 
 ### Everything else
 

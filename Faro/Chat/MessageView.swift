@@ -46,32 +46,22 @@ struct MessageView: View {
             }
         case .assistant:
             VStack(alignment: .leading, spacing: 10) {
-                reasoning
-                // Shown as soon as a call starts (mid-stream, before the
-                // model's own written answer even begins) and stays after
-                // the turn ends — visibility into tool/skill use, not just
-                // a transient status line, like Claude Code's tool blocks.
-                ForEach(message.toolCalls) { call in
-                    ToolCallCard(call: call)
-                }
-                if !message.content.isEmpty {
-                    // Artifacts are only derived once the turn is done —
-                    // parsing mid-stream could turn a half-written fence
-                    // into a false positive.
-                    if liveTurn == nil {
-                        ForEach(ArtifactParser.segments(message.content)) { segment in
-                            switch segment {
-                            case .text(_, let text):
-                                MarkdownText(content: text)
-                                    .foregroundStyle(FaroColor.bone)
-                            case .artifact(let artifact):
-                                ArtifactCard(artifact: artifact)
-                            }
-                        }
-                    } else {
-                        MarkdownText(content: message.content)
-                            .foregroundStyle(FaroColor.bone)
+                // Walks the turn in the order it actually happened — think,
+                // call a tool, think again, answer — instead of one
+                // reasoning blob followed by every tool card at the end.
+                ForEach(Array(timeline.enumerated()), id: \.offset) { _, item in
+                    switch item {
+                    case .text(let text):
+                        textView(text)
+                    case .step(let step, let text):
+                        stepView(step, text: text)
                     }
+                }
+                // Between blocks (waiting for the first token, or right
+                // after a tool result) no step is open yet — still show a
+                // live card so the bubble doesn't sit there looking stuck.
+                if showsThinkingPlaceholder {
+                    ReasoningCard(text: "", isLive: true, seconds: nil, startedAt: liveTurn?.startedAt)
                 }
                 if let liveTurn, showsStatusLine(liveTurn) {
                     TurnStatusLine(turn: liveTurn)
@@ -96,34 +86,71 @@ struct MessageView: View {
         siblings.firstIndex(where: { $0.id == message.id }) ?? 0
     }
 
-    private var reasoningText: String? {
-        guard let text = message.reasoning,
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        return text
+    /// The turn's steps interleaved back into `content`, in the order they
+    /// actually streamed — a step only records where it sits (a character
+    /// range, an offset), so this recomputes cheaply on every redraw.
+    private var timeline: [TurnTimelineItem] {
+        TurnStep.timeline(content: message.content, reasoning: message.reasoning ?? "", steps: message.steps)
     }
 
-    /// One card for both states, so the block doesn't change shape the
-    /// moment the stream ends — only its title and its body do. It stands
-    /// in for the status line for the whole thinking phase, so it arrives
-    /// with the phase rather than with the first reasoning token: nothing
-    /// pops in halfway through the turn.
-    @ViewBuilder private var reasoning: some View {
-        if isThinking || reasoningText != nil {
-            ReasoningCard(
-                text: reasoningText ?? "",
-                isLive: isThinking,
-                seconds: message.reasoningSeconds,
-                startedAt: isThinking ? liveTurn?.startedAt : nil
-            )
+    /// A reasoning block still open (no `end` yet) can only be the one the
+    /// model is writing right now — `finish()` always closes whatever was
+    /// open before a turn's stream ends, so a closed conversation loaded
+    /// back from disk never has one.
+    private func isOpenReasoningStep(_ step: TurnStep) -> Bool {
+        guard liveTurn != nil, case .reasoning(_, let end) = step.kind else { return false }
+        return end == nil
+    }
+
+    @ViewBuilder private func textView(_ text: String) -> some View {
+        // Artifacts are only derived once the turn is done — parsing
+        // mid-stream could turn a half-written fence into a false positive.
+        if liveTurn == nil {
+            ForEach(ArtifactParser.segments(text)) { segment in
+                switch segment {
+                case .text(_, let piece):
+                    MarkdownText(content: piece)
+                        .foregroundStyle(FaroColor.bone)
+                case .artifact(let artifact):
+                    ArtifactCard(artifact: artifact)
+                }
+            }
+        } else {
+            MarkdownText(content: text)
+                .foregroundStyle(FaroColor.bone)
         }
     }
 
-    private var isThinking: Bool { liveTurn?.phase == .thinking }
+    /// One card for both states, so a block doesn't change shape the moment
+    /// it closes — only its title and its body do.
+    @ViewBuilder private func stepView(_ step: TurnStep, text: String?) -> some View {
+        switch step.kind {
+        case .reasoning:
+            let isOpen = isOpenReasoningStep(step)
+            let text = text ?? ""
+            if isOpen || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ReasoningCard(text: text, isLive: isOpen, seconds: step.seconds, startedAt: isOpen ? step.startedAt : nil)
+            }
+        case .tool(let record):
+            ToolCallCard(call: record, startedAt: step.startedAt, seconds: step.seconds)
+        }
+    }
+
+    /// True only between blocks: the model is thinking again (a tool result
+    /// just came back, or the very first token hasn't landed) but no
+    /// reasoning step is open yet to carry a live card of its own.
+    private var showsThinkingPlaceholder: Bool {
+        guard let liveTurn, liveTurn.phase == .thinking else { return false }
+        return !timeline.contains {
+            if case .step(let step, _) = $0 { return isOpenReasoningStep(step) }
+            return false
+        }
+    }
 
     private func showsStatusLine(_ turn: LiveTurn) -> Bool {
-        // While thinking, the reasoning card already carries the label and
-        // the counter; two live timers on one bubble is just noise.
-        if isThinking { return false }
+        // While thinking or using a tool, that step's own card already
+        // carries the label and the counter — two live timers is just noise.
+        if turn.phase == .thinking || turn.phase == .usingTool { return false }
         return message.content.isEmpty || turn.phase != .writing
     }
 }
@@ -157,6 +184,7 @@ private struct TurnStatusLine: View {
         switch turn.phase {
         case .preparing: "Preparando el modelo…"
         case .thinking: "Pensando…"
+        case .usingTool: "Usando herramienta…"
         case .writing: "Escribiendo…"
         case .idle: ""
         }
@@ -434,22 +462,40 @@ struct ReasoningCard: View {
     }
 }
 
-/// One row per tool or skill call. Same card language as `ReasoningCard`:
-/// a running call shows a spinner and no chevron (nothing to open yet), a
-/// finished one becomes tappable to reveal the result or error beneath it.
+/// One row per tool or skill call. Same card language as `ReasoningCard`.
+/// The arguments summary is always visible — what was actually asked is the
+/// point of showing an MCP call — and the card opens (even while still
+/// running, if there are arguments to show) to reveal the full request and,
+/// once it lands, the response or error.
 private struct ToolCallCard: View {
     let call: ToolCallRecord
+    /// When this call started — drives the live counter while running, and
+    /// backdates the placeholder shown before any result exists.
+    let startedAt: Date
+    let seconds: Double?
     @State private var expanded = false
+
+    private var isRunning: Bool { if case .running = call.status { return true } else { return false } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
-            if expanded, let detail {
-                Text(detail)
-                    .font(.system(.footnote, design: .monospaced))
+            // Always visible, not just once expanded: what was actually
+            // asked (the search query, the file path…) is the whole point
+            // of showing an MCP call, not a detail to dig for.
+            if let summary = call.argumentsSummary {
+                Text(summary)
+                    .font(.footnote)
                     .foregroundStyle(FaroColor.ash)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(2)
+            }
+            if expanded {
+                if let arguments = call.arguments {
+                    detailSection(title: "Solicitud", content: arguments)
+                }
+                if let detail {
+                    detailSection(title: detailTitle, content: detail)
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -457,6 +503,8 @@ private struct ToolCallCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .faroCard()
     }
+
+    private var canExpand: Bool { call.arguments != nil || detail != nil }
 
     private var detail: String? {
         switch call.status {
@@ -466,15 +514,34 @@ private struct ToolCallCard: View {
         }
     }
 
+    private var detailTitle: String {
+        if case .failed = call.status { return "Error" }
+        return "Respuesta"
+    }
+
+    private func detailSection(title: String, content: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(FaroColor.bone)
+            Text(content)
+                .font(.system(.footnote, design: .monospaced))
+                .foregroundStyle(FaroColor.ash)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     @ViewBuilder private var header: some View {
-        if detail != nil {
+        if canExpand {
             Button {
                 withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
             } label: {
                 headerRow
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(expanded ? "Ocultar el resultado" : "Mostrar el resultado")
+            .accessibilityLabel(expanded ? "Ocultar la llamada" : "Mostrar la llamada")
         } else {
             headerRow
         }
@@ -483,11 +550,22 @@ private struct ToolCallCard: View {
     private var headerRow: some View {
         HStack(spacing: 8) {
             icon
-            Text(title)
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(FaroColor.bone)
+            if isRunning {
+                SweptLabel(text: title)
+            } else {
+                Text(title)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(FaroColor.bone)
+            }
+            if let server = call.server {
+                Text("· \(server)")
+                    .font(.footnote)
+                    .foregroundStyle(FaroColor.ash)
+                    .lineLimit(1)
+            }
             Spacer(minLength: 8)
-            if detail != nil {
+            duration
+            if canExpand {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(FaroColor.ash)
@@ -497,11 +575,27 @@ private struct ToolCallCard: View {
         .contentShape(.rect)
     }
 
+    @ViewBuilder private var duration: some View {
+        if isRunning {
+            TimelineView(.periodic(from: startedAt, by: 1)) { timeline in
+                Text(ReasoningCard.elapsedLabel(since: startedAt, at: timeline.date))
+                    .font(.footnote)
+                    .monospacedDigit()
+                    .foregroundStyle(FaroColor.ash)
+            }
+        } else if let durationText = Self.durationLabel(seconds) {
+            Text(durationText)
+                .font(.footnote)
+                .monospacedDigit()
+                .foregroundStyle(FaroColor.ash)
+        }
+    }
+
     private var label: String { call.isSkill ? "Skill: \(call.name)" : call.name }
 
     private var title: String {
         switch call.status {
-        case .running: "Usando \(label)…"
+        case .running: "Llamando a \(label)…"
         case .succeeded: label
         case .failed: "\(label) falló"
         }
@@ -520,6 +614,13 @@ private struct ToolCallCard: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(FaroColor.error)
         }
+    }
+
+    private static func durationLabel(_ seconds: Double?) -> String? {
+        guard let seconds, seconds >= 0.1 else { return nil }
+        return seconds < 60
+            ? String(format: "%.1f s", seconds)
+            : "\(Int(seconds) / 60) min \(Int(seconds) % 60) s"
     }
 }
 
