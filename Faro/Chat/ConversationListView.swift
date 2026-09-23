@@ -9,9 +9,11 @@ struct ConversationListView: View {
     let onNew: (Project?) -> Void
     let onDelete: (Conversation) -> Void
     let onDeleteProject: (Project) -> Void
+    /// Owned by `RootView` so the detail column can pause its Lottie
+    /// animation while this sheet covers it.
+    @Binding var showSettings: Bool
 
     @Environment(\.modelContext) private var modelContext
-    @State private var showSettings = false
     @State private var renaming: Conversation?
     @State private var newTitle = ""
     @State private var showNewProjectAlert = false

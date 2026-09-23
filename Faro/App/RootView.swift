@@ -7,6 +7,9 @@ struct RootView: View {
     @Query private var mcpServers: [MCPServerConfig]
     @Query(sort: \Project.createdAt, order: .reverse) private var projects: [Project]
     @State private var selectedID: UUID?
+    /// Lifted out of `ConversationListView` so the detail column knows to
+    /// pause its Lottie animation while the Settings sheet covers it.
+    @State private var showSettings = false
 
     var body: some View {
         NavigationSplitView {
@@ -16,12 +19,16 @@ struct RootView: View {
                 selection: $selectedID,
                 onNew: createConversation,
                 onDelete: delete,
-                onDeleteProject: deleteProject
+                onDeleteProject: deleteProject,
+                showSettings: $showSettings
             )
         } detail: {
             if let conversation = conversations.first(where: { $0.id == selectedID }) {
-                ChatView(viewModel: ChatViewModel(conversation: conversation, modelContext: modelContext))
-                    .id(conversation.id)
+                ChatView(
+                    viewModel: ChatViewModel(conversation: conversation, modelContext: modelContext),
+                    isCovered: showSettings
+                )
+                .id(conversation.id)
             } else {
                 emptyDetail
             }
@@ -53,7 +60,7 @@ struct RootView: View {
         ZStack {
             FaroColor.ink.ignoresSafeArea()
             VStack(spacing: 8) {
-                NuevaConversacionAnimationView()
+                NuevaConversacionAnimationView(isPlaying: !showSettings)
                     .frame(width: 220, height: 220)
                 Text("Faro")
                     .font(.system(size: 34, weight: .regular, design: .serif))
