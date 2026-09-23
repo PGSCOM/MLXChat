@@ -36,6 +36,14 @@ actor InferenceEngine {
     /// a phone has no room for a second set, so loading a new model drops
     /// the previous one instead of stacking them until iOS kills the app.
     private var containers: [String: ModelContainer] = [:]
+    /// A load already in flight, per model id. `loadContainer` awaits an
+    /// `await` inside an actor method, which is a suspension point another
+    /// call can interleave at — without this, two concurrent callers for
+    /// the same never-loaded model (e.g. tapping "download" in the browser
+    /// while a chat turn also starts loading it) would each pass the
+    /// `containers[modelID] == nil` check and kick off their own multi-GB
+    /// download/load. A second caller awaits the first's task instead.
+    private var loadTasks: [String: Task<ModelContainer, Error>] = [:]
     /// Sessions carry the model they were built against — a session holds
     /// its container alive, so evicting a model has to take its sessions
     /// with it or nothing is actually freed.
@@ -84,10 +92,23 @@ actor InferenceEngine {
         if let existing = containers[modelID] {
             return existing
         }
-        let container = try await #huggingFaceLoadModelContainer(
-            configuration: ModelConfiguration(id: modelID),
-            progressHandler: progress
-        )
+        // ponytail: only the initiating caller's `progress` closure actually
+        // fires — a second caller who joins an in-flight load sees no
+        // progress callbacks of its own. Acceptable: the alternative is a
+        // duplicate multi-GB download, and both callers still get the same
+        // loaded container once it's ready.
+        if let inFlight = loadTasks[modelID] {
+            return try await inFlight.value
+        }
+        let task = Task<ModelContainer, Error> {
+            try await #huggingFaceLoadModelContainer(
+                configuration: ModelConfiguration(id: modelID),
+                progressHandler: progress
+            )
+        }
+        loadTasks[modelID] = task
+        defer { loadTasks[modelID] = nil }
+        let container = try await task.value
         containers = [modelID: container]
         sessions = sessions.filter { $0.value.modelID == modelID }
         return container
