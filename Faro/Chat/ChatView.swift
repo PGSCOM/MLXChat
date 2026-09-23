@@ -8,78 +8,92 @@ struct ChatView: View {
     /// Models that can be switched to without a download. Read once off
     /// the main actor — `body` re-runs on every token and this touches disk.
     @State private var quickModelIDs: [String] = []
+    // Auto-scroll only while the user is already at the bottom — otherwise
+    // a streaming reply keeps yanking the view back down and they can never
+    // scroll up to read earlier messages.
+    @State private var isNearBottom = true
     private let downloadCoordinator = ModelDownloadCoordinator.shared
+    private let bottomProximityThreshold: CGFloat = 80
 
     var body: some View {
-        ZStack {
-            FaroColor.ink.ignoresSafeArea()
+        ScrollViewReader { proxy in
+            ZStack {
+                FaroColor.ink.ignoresSafeArea()
 
-            if viewModel.conversation.messages.isEmpty {
-                emptyState
-            } else {
-                transcript
-            }
-
-            VStack {
-                Spacer()
-                VStack(spacing: 8) {
-                    if let status = downloadCoordinator.status[viewModel.conversation.modelID] {
-                        ModelLoadBand(modelName: currentModelName, status: status)
-                    }
-                    if let error = viewModel.errorMessage {
-                        ErrorBand(message: error) { viewModel.errorMessage = nil }
-                    }
-                    ComposerView(viewModel: viewModel)
+                if viewModel.conversation.messages.isEmpty {
+                    emptyState
+                } else {
+                    transcript(proxy: proxy)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 28)
-                .padding(.bottom, 12)
-                // The transcript scrolls underneath, so the composer sits
-                // on a fade into the page rather than a hard band edge.
-                .background(
-                    LinearGradient(
-                        stops: [
-                            .init(color: FaroColor.ink.opacity(0), location: 0),
-                            .init(color: FaroColor.ink, location: 0.5),
-                        ],
-                        startPoint: .top, endPoint: .bottom
+
+                VStack {
+                    Spacer()
+                    if !isNearBottom && !viewModel.conversation.messages.isEmpty {
+                        ScrollToBottomButton {
+                            isNearBottom = true
+                            scrollToBottom(proxy)
+                        }
+                        .padding(.bottom, 8)
+                    }
+                    VStack(spacing: 8) {
+                        if let status = downloadCoordinator.status[viewModel.conversation.modelID] {
+                            ModelLoadBand(modelName: currentModelName, status: status)
+                        }
+                        if let error = viewModel.errorMessage {
+                            ErrorBand(message: error) { viewModel.errorMessage = nil }
+                        }
+                        ComposerView(viewModel: viewModel)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 28)
+                    .padding(.bottom, 12)
+                    // The transcript scrolls underneath, so the composer sits
+                    // on a fade into the page rather than a hard band edge.
+                    .background(
+                        LinearGradient(
+                            stops: [
+                                .init(color: FaroColor.ink.opacity(0), location: 0),
+                                .init(color: FaroColor.ink, location: 0.5),
+                            ],
+                            startPoint: .top, endPoint: .bottom
+                        )
                     )
+                }
+            }
+            .navigationTitle(viewModel.conversation.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem {
+                    Button {
+                        showVoice = true
+                    } label: {
+                        Image(systemName: "waveform")
+                    }
+                    .tint(FaroColor.ash)
+                    .accessibilityLabel("Modo voz")
+                }
+                ToolbarItem {
+                    turnMenu
+                }
+            }
+            // Also re-reads when the browser closes, so a model downloaded
+            // just now shows up in the quick list.
+            .task(id: showModelBrowser) { await refreshQuickModels() }
+            .sheet(isPresented: $showModelBrowser) {
+                ModelBrowserView(
+                    currentModelID: viewModel.conversation.modelID,
+                    onSelect: viewModel.changeModel
                 )
             }
-        }
-        .navigationTitle(viewModel.conversation.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    showVoice = true
-                } label: {
-                    Image(systemName: "waveform")
-                }
-                .tint(FaroColor.ash)
-                .accessibilityLabel("Modo voz")
+            .sheet(isPresented: $showSettings) {
+                GenerationSettingsSheet(
+                    conversation: viewModel.conversation,
+                    onDismiss: viewModel.applyGenerationSettingsChange
+                )
             }
-            ToolbarItem {
-                turnMenu
+            .fullScreenCover(isPresented: $showVoice) {
+                VoiceView(viewModel: viewModel)
             }
-        }
-        // Also re-reads when the browser closes, so a model downloaded
-        // just now shows up in the quick list.
-        .task(id: showModelBrowser) { await refreshQuickModels() }
-        .sheet(isPresented: $showModelBrowser) {
-            ModelBrowserView(
-                currentModelID: viewModel.conversation.modelID,
-                onSelect: viewModel.changeModel
-            )
-        }
-        .sheet(isPresented: $showSettings) {
-            GenerationSettingsSheet(
-                conversation: viewModel.conversation,
-                onDismiss: viewModel.applyGenerationSettingsChange
-            )
-        }
-        .fullScreenCover(isPresented: $showVoice) {
-            VoiceView(viewModel: viewModel)
         }
     }
 
@@ -226,40 +240,70 @@ struct ChatView: View {
         }
     }
 
-    private var transcript: some View {
+    private func transcript(proxy: ScrollViewProxy) -> some View {
         // Sorted once per redraw: `viewModel.messages` re-reads and
         // re-sorts the relationship on every access, and this view redraws
         // on every token.
         let messages = viewModel.messages
-        return ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 20) {
-                    ForEach(messages) { message in
-                        MessageView(
-                            message: message, liveTurn: liveTurn(for: message),
-                            viewModel: viewModel, quickModelIDs: quickModelIDs
-                        )
-                        .id(message.id)
-                    }
-                    Color.clear.frame(height: 90).id("bottom")
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 20) {
+                ForEach(messages) { message in
+                    MessageView(
+                        message: message, liveTurn: liveTurn(for: message),
+                        viewModel: viewModel, quickModelIDs: quickModelIDs
+                    )
+                    .id(message.id)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
+                Color.clear.frame(height: 90).id("bottom")
             }
-            .scrollDismissesKeyboard(.interactively)
-            .onChange(of: messages.last?.content) { scrollToBottom(proxy) }
-            .onChange(of: messages.last?.reasoning) { scrollToBottom(proxy) }
-            // Steps only change at block boundaries (a tool card appearing,
-            // a reasoning block closing) — `reasoning` above already covers
-            // a block's own growth token by token.
-            .onChange(of: messages.last?.stepsRaw) { scrollToBottom(proxy) }
-            .onChange(of: messages.count) { proxy.scrollTo("bottom", anchor: .bottom) }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
         }
+        .scrollDismissesKeyboard(.interactively)
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            let distanceFromBottom = geometry.contentSize.height
+                - geometry.containerSize.height
+                - geometry.contentOffset.y
+            return distanceFromBottom < bottomProximityThreshold
+        } action: { _, nearBottom in
+            isNearBottom = nearBottom
+        }
+        .onChange(of: messages.last?.content) { scrollToBottomIfNear(proxy) }
+        .onChange(of: messages.last?.reasoning) { scrollToBottomIfNear(proxy) }
+        // Steps only change at block boundaries (a tool card appearing,
+        // a reasoning block closing) — `reasoning` above already covers
+        // a block's own growth token by token.
+        .onChange(of: messages.last?.stepsRaw) { scrollToBottomIfNear(proxy) }
+        .onChange(of: messages.count) {
+            isNearBottom = true
+            proxy.scrollTo("bottom", anchor: .bottom)
+        }
+    }
+
+    private func scrollToBottomIfNear(_ proxy: ScrollViewProxy) {
+        guard isNearBottom else { return }
+        scrollToBottom(proxy)
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
         withAnimation(.easeOut(duration: 0.2)) {
             proxy.scrollTo("bottom", anchor: .bottom)
+        }
+    }
+
+    private struct ScrollToBottomButton: View {
+        let action: () -> Void
+
+        var body: some View {
+            Button(action: action) {
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(FaroColor.bone)
+                    .frame(width: 36, height: 36)
+                    .background(FaroColor.ink.opacity(0.9), in: Circle())
+                    .overlay(Circle().strokeBorder(FaroColor.ash.opacity(0.25)))
+            }
+            .accessibilityLabel("Ir al final")
         }
     }
 
