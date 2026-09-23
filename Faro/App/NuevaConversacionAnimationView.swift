@@ -10,8 +10,20 @@ import SwiftUI
 /// hand. The export's inline fallback values are stale, so a hand-edited
 /// file makes lottie-ios read leftover gradient stops as opacity and draw
 /// the tower see-through.
+///
+/// `respectAnimationFrameRate` is off-limits here: this asset's automatic
+/// engine selection resolves to Core Animation, which throws a fatal error
+/// the moment that property is set (confirmed by a crashing CI run — don't
+/// reintroduce it). Left playing behind a sheet (Settings, generation
+/// settings, the model browser), the animation still visibly drags down the
+/// sheet's own scroll framerate, so it's paused instead whenever one covers
+/// this view.
 struct NuevaConversacionAnimationView: View {
     @Environment(\.colorScheme) private var colorScheme
+    /// Set to `false` while a sheet covers this view — a paused Lottie still
+    /// costs nothing, but a playing one keeps redrawing behind whatever is
+    /// on top of it for no visible benefit.
+    var isPlaying = true
 
     private var animation: LottieAnimation? {
         LottieAnimation.named(colorScheme == .light ? "NuevaConversacionClaro" : "NuevaConversacionOscuro")
@@ -19,7 +31,7 @@ struct NuevaConversacionAnimationView: View {
 
     var body: some View {
         LottieView(animation: animation)
-            .playing(loopMode: .loop)
+            .playbackMode(isPlaying ? .playing(.fromProgress(nil, toProgress: 1, loopMode: .loop)) : .paused(at: .currentFrame))
             .resizable()
             .accessibilityHidden(true)
     }

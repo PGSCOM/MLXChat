@@ -2,6 +2,10 @@ import SwiftUI
 
 struct ChatView: View {
     @State var viewModel: ChatViewModel
+    /// True while the sidebar's own Settings sheet covers this view —
+    /// pauses the empty-state Lottie animation so it doesn't redraw behind
+    /// a sheet the user can't see it through.
+    var isCovered = false
     @State private var showModelBrowser = false
     @State private var showSettings = false
     @State private var showVoice = false
@@ -189,7 +193,7 @@ struct ChatView: View {
 
     private var emptyState: some View {
         VStack(spacing: 18) {
-            NuevaConversacionAnimationView()
+            NuevaConversacionAnimationView(isPlaying: !(isCovered || showSettings || showModelBrowser || showVoice))
                 .frame(width: 240, height: 240)
             Text("Todo ocurre en este dispositivo")
                 .font(.system(size: 16))
