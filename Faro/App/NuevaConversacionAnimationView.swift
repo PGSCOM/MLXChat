@@ -11,12 +11,13 @@ import SwiftUI
 /// file makes lottie-ios read leftover gradient stops as opacity and draw
 /// the tower see-through.
 ///
-/// This animation (2200×2200, ~117 shape groups, 17 trim paths, `Add` masks)
-/// mixes trims and masks in a way the Core Animation engine can't render, so
-/// Lottie falls back to its main-thread engine — real CPU work on every
-/// frame it's on screen. Left playing behind a sheet (Settings, generation
-/// settings, the model browser) that competes with it for the main thread,
-/// it visibly drags the sheet's own scroll framerate down.
+/// `respectAnimationFrameRate` is off-limits here: this asset's automatic
+/// engine selection resolves to Core Animation, which throws a fatal error
+/// the moment that property is set (confirmed by a crashing CI run — don't
+/// reintroduce it). Left playing behind a sheet (Settings, generation
+/// settings, the model browser), the animation still visibly drags down the
+/// sheet's own scroll framerate, so it's paused instead whenever one covers
+/// this view.
 struct NuevaConversacionAnimationView: View {
     @Environment(\.colorScheme) private var colorScheme
     /// Set to `false` while a sheet covers this view — a paused Lottie still
@@ -31,11 +32,6 @@ struct NuevaConversacionAnimationView: View {
     var body: some View {
         LottieView(animation: animation)
             .playbackMode(isPlaying ? .playing(.fromProgress(nil, toProgress: 1, loopMode: .loop)) : .paused(at: .currentFrame))
-            // The file is keyframed at 30fps but the main-thread engine
-            // redraws on every screen refresh by default (60-120Hz) —
-            // this caps real redraw work to the 30 frames that actually
-            // change anything, cutting it roughly in half on most devices.
-            .configure(\.respectAnimationFrameRate, to: true)
             .resizable()
             .accessibilityHidden(true)
     }
