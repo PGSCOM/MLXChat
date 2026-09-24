@@ -70,17 +70,19 @@ struct ModelBrowserView: View {
                     }
                 }
 
-                Section("Recomendados") {
-                    ForEach(CuratedModel.all) { model in
-                        ModelRow(
-                            id: model.id,
-                            title: model.displayName,
-                            subtitle: subtitle(for: model),
-                            isSelected: model.id == currentModelID,
-                            isDownloaded: downloadedIDs.contains(model.id),
-                            coordinator: coordinator,
-                            onSelect: { select(model.id) }
-                        )
+                Section("Explorar familias") {
+                    ForEach(CuratedModel.families) { family in
+                        NavigationLink {
+                            familyModels(family)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(family.title)
+                                    .foregroundStyle(FaroColor.bone)
+                                Text("\(family.models.count) variantes · \(downloadedCount(in: family)) descargadas")
+                                    .font(.caption)
+                                    .foregroundStyle(FaroColor.ash)
+                            }
+                        }
                     }
                 }
 
@@ -211,6 +213,35 @@ struct ModelBrowserView: View {
 
     private func displayName(for id: String) -> String {
         CuratedModel.all.first { $0.id == id }?.displayName ?? id
+    }
+
+    private func downloadedCount(in family: CuratedModel.Family) -> Int {
+        family.models.filter { downloadedIDs.contains($0.id) }.count
+    }
+
+    private func familyModels(_ family: CuratedModel.Family) -> some View {
+        List {
+            Section {
+                ForEach(family.models) { model in
+                    ModelRow(
+                        id: model.id,
+                        title: model.displayName,
+                        subtitle: subtitle(for: model),
+                        isSelected: model.id == currentModelID,
+                        isDownloaded: downloadedIDs.contains(model.id),
+                        coordinator: coordinator,
+                        onSelect: { select(model.id) }
+                    )
+                }
+            } footer: {
+                Text("El tamaño indicado es el de los archivos. El uso real de memoria también depende del contexto y de la generación.")
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(FaroColor.ink)
+        .navigationTitle(family.title)
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private func subtitle(for model: CuratedModel) -> String {
