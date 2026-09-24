@@ -34,6 +34,15 @@ struct CuratedModel: Identifiable, Sendable {
             displayName: "Qwen 3.5 · 4B", approxSizeGB: 3.0,
             isVision: true, supportsReasoning: true, isRecommended: true
         ),
+        // Best quality in the family (32 vs 27 on Artificial Analysis'
+        // Intelligence Index), but 5.95 GB puts it closest to the edge on
+        // a 12 GB iPad once the app, context, and generation buffer are
+        // accounted for — not the default, but worth offering explicitly.
+        CuratedModel(
+            id: "mlx-community/Qwen3.5-9B-4bit",
+            displayName: "Qwen 3.5 · 9B", approxSizeGB: 5.95,
+            isVision: true, supportsReasoning: true, isRecommended: false
+        ),
         // Smallest download, with noticeably weaker answers.
         CuratedModel(
             id: "mlx-community/Qwen3.5-0.8B-4bit",
