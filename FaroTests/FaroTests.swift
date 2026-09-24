@@ -317,6 +317,27 @@ struct DefaultModelTests {
     }
 }
 
+struct CuratedModelFamilyTests {
+    @Test func familiesContainEveryModelExactlyOnce() {
+        let flattened = CuratedModel.families.flatMap(\.models)
+        #expect(flattened.map(\.id) == CuratedModel.all.map(\.id))
+        #expect(Set(flattened.map(\.id)).count == flattened.count)
+        #expect(CuratedModel.families.allSatisfy { !$0.models.isEmpty })
+        #expect(DefaultModel.repoID == CuratedModel.families[0].models[0].id)
+    }
+
+    @Test func qwenFamilyContainsAllOfferedSizes() {
+        let qwen = CuratedModel.families.first { $0.id == "qwen3.5" }
+        #expect(qwen?.models.map(\.id) == [
+            "mlx-community/Qwen3.5-2B-4bit",
+            "mlx-community/Qwen3.5-4B-4bit",
+            "mlx-community/Qwen3.5-9B-4bit",
+            "mlx-community/Qwen3.5-0.8B-4bit",
+        ])
+        #expect(CuratedModel.families.map(\.id) == ["qwen3.5", "gemma4", "lfm2.5"])
+    }
+}
+
 struct VoiceSettingsTests {
     /// The exact bug this fixes: `AVSpeechSynthesisVoice(language:)` wants
     /// BCP-47, and `Locale.identifier` alone hands it ICU with an
