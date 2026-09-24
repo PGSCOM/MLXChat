@@ -10,8 +10,8 @@ import Foundation
 /// chat — checked by rendering each chat template the way `ChatSession`
 /// does. The first entry is also `DefaultModel`.
 ///
-/// Deliberately not listed: Gemma 4 E4B (fits few devices at 5+ GB) and
-/// the `gemma-4-*-qat-mobile` repos (a quantization format — per-tensor
+/// Deliberately not listed: the `gemma-4-*-qat-mobile` repos
+/// (a quantization format — per-tensor
 /// `weight_scale`, `quant_method: gemma` — mlx-swift-lm doesn't load).
 struct CuratedModel: Identifiable, Sendable {
     let id: String
@@ -56,6 +56,32 @@ struct CuratedModel: Identifiable, Sendable {
             id: "mlx-community/gemma-4-e2b-it-4bit",
             displayName: "Gemma 4 · E2B", approxSizeGB: 3.6,
             isVision: true, supportsReasoning: true, isRecommended: false
+        ),
+        // Larger than E2B; only offer as an optional download on devices
+        // with enough free memory for the context and generation cache.
+        CuratedModel(
+            id: "mlx-community/gemma-4-e4b-it-4bit",
+            displayName: "Gemma 4 · E4B", approxSizeGB: 5.2,
+            isVision: true, supportsReasoning: true, isRecommended: false
+        ),
+        // Light text-only alternative; this Instruct template accepts
+        // tools, but does not open a reasoning block for generation.
+        CuratedModel(
+            id: "mlx-community/LFM2.5-1.2B-Instruct-4bit",
+            displayName: "LFM 2.5 · 1.2B Instruct", approxSizeGB: 0.7,
+            isVision: false, supportsReasoning: false, isRecommended: false
+        ),
+        CuratedModel(
+            id: "mlx-community/LFM2.5-VL-1.6B-4bit",
+            displayName: "LFM 2.5 · VL 1.6B", approxSizeGB: 1.5,
+            isVision: true, supportsReasoning: false, isRecommended: false
+        ),
+        // This repo has a text-only lfm2 config despite its model card's
+        // generic mlx-vlm image example. Do not advertise image support.
+        CuratedModel(
+            id: "mlx-community/LFM2.5-2.6B-4bit",
+            displayName: "LFM 2.5 · 2.6B", approxSizeGB: 1.5,
+            isVision: false, supportsReasoning: true, isRecommended: false
         ),
     ]
 }
