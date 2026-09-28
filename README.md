@@ -36,3 +36,8 @@ similar.
 Necesita Apple Silicon (A17 Pro+/M-series) y bastante RAM libre: la app pide
 el entitlement de límite de memoria aumentado, pero un modelo de 3-4B en
 4-bit igualmente ocupa varios GB.
+
+## Licencia
+
+Apache License 2.0 — ver [LICENSE](LICENSE) y [NOTICE](NOTICE).
+© 2026 [Pablo García (PGSCOM)](https://pgscom.es)
