@@ -39,10 +39,5 @@ el entitlement de límite de memoria aumentado, pero un modelo de 3-4B en
 
 ## Licencia
 
-Este proyecto está licenciado bajo la Apache License, Version 2.0.
-Copyright © 2026 Pablo García (PGSCOM)
-
-Consulta el archivo [LICENSE](LICENSE) para el texto completo de la licencia
-y el archivo [NOTICE](NOTICE) para la información de atribución.
-
-Autor original: [Pablo García](https://pgscom.es)
+Apache License 2.0 — ver [LICENSE](LICENSE) y [NOTICE](NOTICE).
+© 2026 [Pablo García (PGSCOM)](https://pgscom.es)
