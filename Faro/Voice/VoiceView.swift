@@ -76,15 +76,20 @@ struct VoiceView: View {
         }
         .task {
             let granted = await voice.requestAuthorization()
-            if !granted {
-                voice.errorMessage = "Necesito permiso de micrófono y de voz para el modo de conversación."
+            guard granted else {
+                voice.errorMessage = "Necesito permiso de micrófono para el modo de conversación."
+                return
             }
+            await voice.prepare()
         }
         .onChange(of: viewModel.isGenerating) { _, isGenerating in
             guard !isGenerating, voice.state == .thinking else { return }
             voice.speak(lastAnswer)
         }
-        .onDisappear { voice.cancel() }
+        .onDisappear {
+            voice.cancel()
+            Task { await NeuralVoice.shared.unload() }
+        }
         .sheet(isPresented: $showVoiceSettings) {
             VoiceSettingsView()
         }
@@ -101,6 +106,7 @@ struct VoiceView: View {
     private var beamIntensity: Double {
         switch voice.state {
         case .idle: 0.2
+        case .preparing: 0.3
         case .listening: 0.4 + voice.amplitude * 0.6
         case .thinking: 1
         case .speaking: 0.5
@@ -110,6 +116,7 @@ struct VoiceView: View {
     private var displayText: String {
         switch voice.state {
         case .idle: "Toca para hablar"
+        case .preparing: preparingText
         case .listening: voice.transcript.isEmpty ? "Escuchando…" : voice.transcript
         // The answer streams in while it's still being written, so the
         // wait shows progress instead of a blank screen.
@@ -118,23 +125,30 @@ struct VoiceView: View {
         }
     }
 
+    private var preparingText: String {
+        guard let progress = voice.prepareProgress, progress > 0 else { return "Preparando la voz…" }
+        return "Descargando voz… \(Int(progress * 100)) %"
+    }
+
     private func primaryAction() {
         switch voice.state {
         case .idle:
-            voice.startListening()
+            Task { await voice.startListening() }
         case .listening:
-            let text = voice.stopListening()
-            guard !text.isEmpty else {
-                voice.cancel()
-                return
+            Task {
+                let text = await voice.stopListening()
+                guard !text.isEmpty else {
+                    voice.cancel()
+                    return
+                }
+                viewModel.draft = text
+                viewModel.send()
+                // `send()` refuses while a turn is already running; without
+                // this the session would sit in `.thinking` forever waiting
+                // for a generation that never started.
+                if !viewModel.isGenerating { voice.cancel() }
             }
-            viewModel.draft = text
-            viewModel.send()
-            // `send()` refuses while a turn is already running; without
-            // this the session would sit in `.thinking` forever waiting
-            // for a generation that never started.
-            if !viewModel.isGenerating { voice.cancel() }
-        case .thinking, .speaking:
+        case .preparing, .thinking, .speaking:
             break
         }
     }
